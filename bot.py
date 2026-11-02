@@ -11,7 +11,7 @@ from aiogram.dispatcher.filters.state import State, StatesGroup
 # ==========================================
 # 1. إعدادات البوت والاتصال الأساسية (ملف موحد)
 # ==========================================
-API_TOKEN = "5418318795:AAE_s0NJw9IE1JWg6x9JuWQpl0MHDjcFCf8"  # ضع توكن بوتك هنا فقط
+API_TOKEN = "5418318795:AAExmBwOEnNh6POj62mu15x339E1iIOW2y0"  # ضع توكن بوتك هنا فقط
 ADMIN_IDS = [5396793642]  # ضع آيدي المشرف الخاص بك هنا
 
 logging.basicConfig(level=logging.INFO)
