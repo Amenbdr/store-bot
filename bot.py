@@ -56,10 +56,11 @@ COUNTRY_NAMES = {
     "17": "اليمن 🇾🇪", "18": "رواندا 🇷🇼", "19": "مصر 🇪🇬", "22": "المغرب 🇲🇦"
 }
 
-SERVICES_CODES = {
+    SERVICES_CODES = {
     "wa": "واتساب", "tg": "تيليجرام", "ig": "انستقرام", "go": "جوجل",
-    "fb": "فيسبوك", "tw": "تويتر", "vi": فايبر", "imo": "إيمو", "tik": "تيك توك"
+    "fb": "فيسبوك", "tw": "تويتر", "vi": "فايبر", "imo": "إيمو", "tik": "تيك توك"
 }
+
 
 class UserStates(StatesGroup):
     waiting_for_captcha = State()
