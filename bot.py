@@ -1,8 +1,17 @@
 import os
-from http.server import HTTPServer, BaseHTTPRequestHandler
+import json
+import logging
 import threading
+from http.server import HTTPServer, BaseHTTPRequestHandler
+from aiogram import Bot, Dispatcher, executor, types
+from aiogram.contrib.fsm_storage.memory import MemoryStorage
+from aiogram.dispatcher.filters.state import State, StatesGroup
+from aiogram.dispatcher import FSMContext
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
-# خادم وهمي لفتح المنفذ المطلوب في ريندر وتجنب خطأ Port scan timeout
+# ----------------------------------------------------
+# 1. إعداد خادم الويب (Heartbeat) لمنع التوقف على Render
+# ----------------------------------------------------
 class SimpleHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
@@ -17,351 +26,236 @@ def run_server():
 # تشغيل الخادم الوهمي في الخلفية
 threading.Thread(target=run_server, daemon=True).start()
 
-import logging
-from aiogram import Bot, Dispatcher, executor, types
-from aiogram.contrib.fsm_storage.memory import MemoryStorage
-from aiogram.dispatcher.filters.state import State, StatesGroup
-from aiogram.dispatcher import FSMContext
-from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
-
-# ضع توكن البوت الحقيقي هنا من BotFather
+# ----------------------------------------------------
+# 2. إعدادات البوت والبيانات
+# ----------------------------------------------------
 API_TOKEN = "5418318795:AAE_s0NJw9IE1JWg6x9JuWQpl0MHDjcFCf8"
-
-# أيدي المشرف الخاص بك
 ADMIN_IDS = [5396793642]
 
-# قاموس لتخزين أرصدة المستخدمين مؤقتاً {user_id: balance}
-user_balances = {}
+DB_FILE = "database.json"
 
-# إعداد السجل (Logging)
+def load_db():
+    if not os.path.exists(DB_FILE):
+        return {}
+    try:
+        with open(DB_FILE, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+def save_db(data):
+    try:
+        with open(DB_FILE, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=4)
+    except Exception as e:
+        logging.error(f"Error saving database: {e}")
+
 logging.basicConfig(level=logging.INFO)
 
-# تهيئة البوت والتخزين المؤقت للحالات
 storage = MemoryStorage()
 bot = Bot(token=API_TOKEN)
 dp = Dispatcher(bot, storage=storage)
 
-# تعريف حالات المحادثة
-class CheckoutState(StatesGroup):
-    waiting_for_receipt = State()
+# الحالات (States)
+class UserStates(StatesGroup):
+    waiting_for_recharge_amount = State()
 
 class AdminStates(StatesGroup):
     waiting_for_add_id = State()
     waiting_for_add_amount = State()
-    waiting_for_deduct_id = State()
-    waiting_for_deduct_amount = State()
-    waiting_for_ban_input = State()
-    waiting_for_unban_input = State()
 
-# متغير مؤقت لحفظ بيانات الإدارة أثناء العمليات
 admin_temp_data = {}
 
+# القائمة الرئيسية
+def get_main_menu(user_id):
+    menu_keyboard = InlineKeyboardMarkup(row_width=2)
+    menu_keyboard.add(InlineKeyboardButton("⭐ الخدمات المطلوبة أكثر", callback_data="top_services"))
+    menu_keyboard.add(
+        InlineKeyboardButton("💖 خدمات الرشق 98", callback_data="buy_smm"),
+        InlineKeyboardButton("🎁 شحن ألعاب 🎮", callback_data="buy_games")
+    )
+    menu_keyboard.add(InlineKeyboardButton("🛍️ متجر المنتجات الرقمية", callback_data="digital_store"))
+    menu_keyboard.add(
+        InlineKeyboardButton("👤 حسابي", callback_data="my_account"),
+        InlineKeyboardButton("📝 سجل طلباتي", callback_data="my_orders")
+    )
+    menu_keyboard.add(
+        InlineKeyboardButton("🔍 بحث عن خدمة", callback_data="search_service"),
+        InlineKeyboardButton("🔄 حالة الطلب", callback_data="order_status")
+    )
+    menu_keyboard.add(InlineKeyboardButton("💰 شحن الرصيد", callback_data="recharge_balance"))
+    
+    if user_id in ADMIN_IDS:
+        menu_keyboard.add(InlineKeyboardButton("⚙️ لوحة تحكم المشرفين", callback_data="admin_panel"))
+        
+    return menu_keyboard
+
 # ----------------------------------------------------
-# 1. أمر البدء (/start) وعرض الواجهة والأقسام
+# 3. الأوامر والأحداث
 # ----------------------------------------------------
 @dp.message_handler(commands=['start'])
-async def send_welcome(message: types.Message):
+async def send_welcome(message: types.Message, state: FSMContext):
+    await state.finish()
     user_id = message.from_user.id
     user_name = message.from_user.first_name
     
-    # واجهة الأقسام والخدمات التي تظهر لجميع العملاء
-    menu_keyboard = InlineKeyboardMarkup(row_width=2)
-    menu_keyboard.add(
-        InlineKeyboardButton("🎮 شدات ببجي (PUBG)", callback_data="buy_pubg"),
-        InlineKeyboardButton("🔥 جواهر فري فاير (Free Fire)", callback_data="buy_freefire"),
-        InlineKeyboardButton("📞 أرقام وهمية وتفعيل", callback_data="buy_sim"),
-        InlineKeyboardButton("👤 حسابي / الرصيد", callback_data="my_account")
-    )
-    
-    # إذا كان المستخدم هو المشرف، نضيف له زر لوحة التحكم في أسفل القائمة
-    if user_id in ADMIN_IDS:
-        menu_keyboard.add(InlineKeyboardButton("⚙️ لوحة تحكم المشرفين", callback_data="admin_panel"))
+    db = load_db()
+    str_user_id = str(user_id)
+    if str_user_id not in db:
+        db[str_user_id] = {"balance": 0.0, "name": user_name}
+        save_db(db)
+        
+    balance = db[str_user_id].get("balance", 0.0)
     
     welcome_text = (
-        f"مرحباً بك يا **{user_name}** في متجرك الرقمي 🛒✨\n\n"
-        "متجرنا موثق وسريع لتلبية طلبات الألعاب والخدمات الرقمية.\n"
-        "الرجاء اختيار القسم أو الخدمة المطلوبة من الأزرار أدناه:"
+        f"🌸 **قسم خدمات«الرشق»بطاقات»الألعاب**\n\n"
+        f"أهلاً بك في بوابتك الشاملة لكل ما تحتاجه! 🌟\n"
+        f"هنا يمكنك الوصول إلى:\n"
+        f"◆ خدمات دعم السوشيال ميديا (الرشق)\n"
+        f"◆ شحن الألعاب المباشر\n"
+        f"◆ بطاقات الهدايا المتنوعة\n"
+        f"◆ متجر المنتجات الرقمية (حسابات، اشتراكات، برامج)\n\n"
+        f"💰 رصيدك الحالي: `{balance:.2f}` دولار أمريكي.\n\n"
+        f"👇 اختر القسم الذي تريده من الأزرار أدناه:"
     )
     
-    await message.answer(welcome_text, reply_markup=menu_keyboard, parse_mode="Markdown")
+    await message.answer(welcome_text, reply_markup=get_main_menu(user_id), parse_mode="Markdown")
 
-# ----------------------------------------------------
-# 2. لوحة تحكم المشرفين الرئيسية
-# ----------------------------------------------------
+@dp.callback_query_handler(text="back_to_main")
+async def back_to_main_menu(call: types.CallbackQuery, state: FSMContext):
+    await state.finish()
+    user_id = call.from_user.id
+    db = load_db()
+    balance = db.get(str(user_id), {}).get("balance", 0.0)
+    
+    welcome_text = (
+        f"🌸 **القائمة الرئيسية**\n\n"
+        f"💰 رصيدك الحالي: `{balance:.2f}` دولار أمريكي.\n\n"
+        f"👇 اختر القسم الذي تريده من الأزرار أدناه:"
+    )
+    try:
+        await call.message.edit_text(welcome_text, reply_markup=get_main_menu(user_id), parse_mode="Markdown")
+    except Exception:
+        await call.message.delete()
+        await call.message.answer(welcome_text, reply_markup=get_main_menu(user_id), parse_mode="Markdown")
+
+# قسم شحن الرصيد
+@dp.callback_query_handler(text="recharge_balance")
+async def recharge_balance_start(call: types.CallbackQuery):
+    keyboard = InlineKeyboardMarkup().add(
+        InlineKeyboardButton("❌ إلغاء", callback_data="back_to_main")
+    )
+    text = (
+        "💰 **شحن الرصيد**\n\n"
+        "الرجاء إرسال المبلغ الذي تود إضافته إلى رصيدك بالدولار الأمريكي (مثال: 10 أو 4.5).\n\n"
+        "🛑 **الحد الأدنى للشحن هو: 0.5$**"
+    )
+    await call.message.edit_text(text, reply_markup=keyboard, parse_mode="Markdown")
+    await UserStates.waiting_for_recharge_amount.set()
+
+@dp.message_handler(state=UserStates.waiting_for_recharge_amount)
+async def process_recharge_amount(message: types.Message, state: FSMContext):
+    if message.text == "إلغاء":
+        await state.finish()
+        await message.answer("تم إلغاء عملية شحن الرصيد.", reply_markup=get_main_menu(message.from_user.id))
+        return
+        
+    try:
+        amount = float(message.text.strip())
+        if amount < 0.5:
+            await message.answer("⚠️ عذراً، الحد الأدنى للشحن هو 0.5$ دولار. الرجاء إرسال مبلغ صحيح:")
+            return
+            
+        user_id = message.from_user.id
+        user_name = message.from_user.first_name
+        
+        admin_notification = (
+            f"🔔 **طلب شحن رصيد جديد!**\n\n"
+            f"👤 المستخدم: {user_name}\n"
+            f"🆔 الأيدي: `{user_id}`\n"
+            f"💵 المبلغ المطلوب: `{amount}$`\n\n"
+            f"قم بمراجعة التحويل وإضافة الرصيد له من لوحة التحكم."
+        )
+        
+        for adm in ADMIN_IDS:
+            try:
+                await bot.send_message(adm, admin_notification, parse_mode="Markdown")
+            except Exception:
+                pass
+                
+        await message.answer(
+            f"✅ **تم إرسال طلبك بنجاح!**\n\n"
+            f"تم استلام طلب شحن بقيمة `{amount}$`. سيتم مراجعة العملية وإضافة الرصيد إلى حسابك فور تأكيد الدفع.",
+            reply_markup=get_main_menu(user_id),
+            parse_mode="Markdown"
+        )
+        await state.finish()
+    except Exception:
+        await message.answer("⚠️ الرجاء إرسال رقم صحيح يمثل المبلغ (مثال: 5 أو 10):")
+
+@dp.callback_query_handler(text=["top_services", "buy_smm", "buy_games", "digital_store", "my_orders", "search_service", "order_status"])
+async def dummy_sections(call: types.CallbackQuery):
+    kb = InlineKeyboardMarkup().add(InlineKeyboardButton("🔙 الرجوع إلى القائمة الرئيسية", callback_data="back_to_main"))
+    await call.message.edit_text("⚙️ هذا القسم قيد التحديث وسيتم إطلاقه قريباً.", reply_markup=kb)
+
+@dp.callback_query_handler(text="my_account")
+async def my_account_handler(call: types.CallbackQuery):
+    user_id = call.from_user.id
+    db = load_db()
+    balance = db.get(str(user_id), {}).get("balance", 0.0)
+    text = f"👤 **معلومات حسابك:**\n\n🆔 الأيدي: `{user_id}`\n💰 الرصيد: `{balance:.2f}$`"
+    kb = InlineKeyboardMarkup().add(InlineKeyboardButton("🔙 الرجوع إلى القائمة الرئيسية", callback_data="back_to_main"))
+    await call.message.edit_text(text, reply_markup=kb, parse_mode="Markdown")
+
+# لوحة التحكم للمشرف
 @dp.callback_query_handler(text="admin_panel")
 async def open_admin_panel(call: types.CallbackQuery):
     if call.from_user.id not in ADMIN_IDS:
-        await call.answer("عذراً، هذه اللوحة مخصصة للمشرفين فقط!", show_alert=True)
+        await call.answer("عذراً، هذه اللوحة للمشرفين فقط!", show_alert=True)
         return
-        
     keyboard = InlineKeyboardMarkup(row_width=2)
     keyboard.add(
-        InlineKeyboardButton("➕ إضافة رصيد لمستخدم", callback_data="adm_add_balance"),
-        InlineKeyboardButton("➖ خصم رصيد من مستخدم", callback_data="adm_deduct_balance"),
-        InlineKeyboardButton("🚫 حظر مستخدم", callback_data="adm_ban"),
-        InlineKeyboardButton("✅ فك حظر مستخدم", callback_data="adm_unban"),
-        InlineKeyboardButton("🔙 رجوع للقائمة الرئيسية", callback_data="back_to_main")
+        InlineKeyboardButton("➕ إضافة رصيد", callback_data="adm_add_balance"),
+        InlineKeyboardButton("🔙 القائمة الرئيسية", callback_data="back_to_main")
     )
-    
-    text = (
-        "⚙️ **لوحة تحكم المشرفين الرئيسية**\n\n"
-        "مرحباً بك يا مشرفنا. يمكنك إدارة أرصدة المستخدمين والتحكم بالنظام من الأزرار أدناه:"
-    )
-    await call.message.edit_text(text, reply_markup=keyboard, parse_mode="Markdown")
+    await call.message.edit_text("⚙️ **لوحة تحكم المشرفين:**", reply_markup=keyboard, parse_mode="Markdown")
 
-# ----------------------------------------------------
-# 3. خطوات إضافة رصيد للمستخدم
-# ----------------------------------------------------
 @dp.callback_query_handler(text="adm_add_balance")
-async def admin_add_bal_step1(call: types.CallbackQuery):
+async def adm_add_1(call: types.CallbackQuery):
     if call.from_user.id not in ADMIN_IDS:
         return
-    await call.message.edit_text("➕ **إضافة رصيد**\n\nالرجاء إرسال **(ID)** المستخدم المراد إضافة الرصيد له:", reply_markup=None)
+    await call.message.edit_text("أرسل أيدي (ID) المستخدم للإضافة له:", reply_markup=None)
     await AdminStates.waiting_for_add_id.set()
 
 @dp.message_handler(state=AdminStates.waiting_for_add_id)
-async def admin_add_bal_step2(message: types.Message, state: FSMContext):
-    if message.from_user.id not in ADMIN_IDS:
-        return
+async def adm_add_2(message: types.Message, state: FSMContext):
     try:
-        target_id = int(message.text.strip())
-        admin_temp_data['target_id'] = target_id
-        await message.answer("📥 ممتاز. الآن أرسل **المبلغ** المراد إضافته (مثلاً: 10 أو 5.5):")
+        admin_temp_data['target_id'] = int(message.text.strip())
+        await message.answer("الآن أرسل المبلغ المراد إضافته:")
         await AdminStates.waiting_for_add_amount.set()
-    except Exception:
-        await message.answer("⚠️ الرجاء إرسال أيدي (ID) صحيح ومكون من أرقام فقط.")
+    except:
+        await message.answer("أيدي غير صحيح.")
         await state.finish()
 
 @dp.message_handler(state=AdminStates.waiting_for_add_amount)
-async def admin_add_bal_step3(message: types.Message, state: FSMContext):
-    if message.from_user.id not in ADMIN_IDS:
-        return
+async def adm_add_3(message: types.Message, state: FSMContext):
     try:
         amount = float(message.text.strip())
-        target_id = admin_temp_data.get('target_id')
-        
-        current_balance = user_balances.get(target_id, 0.0)
-        user_balances[target_id] = current_balance + amount
-        
-        await message.answer(f"✅ **تمت العملية بنجاح!**\nتمت إضافة `{amount}$` إلى حساب المستخدم `{target_id}`.\nرصيده الحالي: `{user_balances[target_id]}$`", parse_mode="Markdown")
-        
+        target_id = str(admin_temp_data.get('target_id'))
+        db = load_db()
+        if target_id not in db:
+            db[target_id] = {"balance": 0.0, "name": "User"}
+        db[target_id]["balance"] += amount
+        save_db(db)
+        await message.answer(f"✅ تمت إضافة {amount}$ بنجاح للمستخدم {target_id}")
         try:
-            await bot.send_message(target_id, f"🎉 **تمت إضافة رصيد إلى حسابك!**\nتم شحن مبلغ `{amount}$` بواسطة الإدارة.\nرصيدك الحالي: `{user_balances[target_id]}$`", parse_mode="Markdown")
-        except Exception:
+            await bot.send_message(int(target_id), f"🎉 تمت إضافة رصيد بقيمة {amount}$ إلى حسابك بواسطة الإدارة!")
+        except:
             pass
-    except Exception:
-        await message.answer("⚠️ الرجاء إرسال مبلغ صحيح.")
+    except:
+        await message.answer("خطأ في المبلغ.")
     await state.finish()
 
-# ----------------------------------------------------
-# 4. خطوات خصم رصيد من المستخدم
-# ----------------------------------------------------
-@dp.callback_query_handler(text="adm_deduct_balance")
-async def admin_deduct_bal_step1(call: types.CallbackQuery):
-    if call.from_user.id not in ADMIN_IDS:
-        return
-    await call.message.edit_text("➖ **خصم رصيد**\n\nالرجاء إرسال **(ID)** المستخدم المراد الخصم من رصيده:", reply_markup=None)
-    await AdminStates.waiting_for_deduct_id.set()
-
-@dp.message_handler(state=AdminStates.waiting_for_deduct_id)
-async def admin_deduct_bal_step2(message: types.Message, state: FSMContext):
-    if message.from_user.id not in ADMIN_IDS:
-        return
-    try:
-        target_id = int(message.text.strip())
-        admin_temp_data['target_id'] = target_id
-        await message.answer("📤 ممتاز. الآن أرسل **المبلغ** المراد خصمه:")
-        await AdminStates.waiting_for_deduct_amount.set()
-    except Exception:
-        await message.answer("⚠️ الرجاء إرسال أيدي (ID) صحيح.")
-        await state.finish()
-
-@dp.message_handler(state=AdminStates.waiting_for_deduct_amount)
-async def admin_deduct_bal_step3(message: types.Message, state: FSMContext):
-    if message.from_user.id not in ADMIN_IDS:
-        return
-    try:
-        amount = float(message.text.strip())
-        target_id = admin_temp_data.get('target_id')
-        
-        current_balance = user_balances.get(target_id, 0.0)
-        if current_balance < amount:
-            await message.answer(f"⚠️ تنبيه: رصيد المستخدم ({current_balance}$) أقل من المبلغ المراد خصمه ({amount}$)! تم الإلغاء.")
-        else:
-            user_balances[target_id] = current_balance - amount
-            await message.answer(f"✅ **تم الخصم بنجاح!**\nتم خصم `{amount}$` من المستخدم `{target_id}`.\nرصيده الحالي: `{user_balances[target_id]}$`", parse_mode="Markdown")
-            try:
-                await bot.send_message(target_id, f"ℹ️ **تنبيه رصيد:**\nتم خصم مبلغ `{amount}$` من رصيدك بواسطة الإدارة.\nرصيدك الحالي: `{user_balances[target_id]}$`", parse_mode="Markdown")
-            except Exception:
-                pass
-    except Exception:
-        await message.answer("⚠️ الرجاء إرسال مبلغ صحيح.")
-    await state.finish()
-
-# ----------------------------------------------------
-# 5. الحظر وفك الحظر
-# ----------------------------------------------------
-@dp.callback_query_handler(text="adm_ban")
-async def admin_ban_prompt(call: types.CallbackQuery):
-    if call.from_user.id not in ADMIN_IDS:
-        return
-    await call.message.edit_text("🚫 **حظر مستخدم**\nأرسل الآن (ID) الخاص بالمستخدم المراد حظره:", reply_markup=None)
-    await AdminStates.waiting_for_ban_input.set()
-
-@dp.message_handler(state=AdminStates.waiting_for_ban_input)
-async def process_ban_user(message: types.Message, state: FSMContext):
-    if message.from_user.id not in ADMIN_IDS:
-        return
-    try:
-        target_id = int(message.text.strip())
-        await message.answer(f"✅ تم حظر المستخدم `{target_id}` بنجاح.", parse_mode="Markdown")
-    except Exception:
-        await message.answer("⚠️ الرجاء إرسال رقم أيدي صحيح.")
-    await state.finish()
-
-@dp.callback_query_handler(text="adm_unban")
-async def admin_unban_prompt(call: types.CallbackQuery):
-    if call.from_user.id not in ADMIN_IDS:
-        return
-    await call.message.edit_text("✅ **فك حظر مستخدم**\nأرسل الآن (ID) الخاص بالمستخدم لفك حظره:", reply_markup=None)
-    await AdminStates.waiting_for_unban_input.set()
-
-@dp.message_handler(state=AdminStates.waiting_for_unban_input)
-async def process_unban_user(message: types.Message, state: FSMContext):
-    if message.from_user.id not in ADMIN_IDS:
-        return
-    try:
-        target_id = int(message.text.strip())
-        await message.answer(f"✅ تم فك الحظر عن المستخدم `{target_id}` بنجاح.", parse_mode="Markdown")
-    except Exception:
-        await message.answer("⚠️ الرجاء إرسال رقم أيدي صحيح.")
-    await state.finish()
-
-# ----------------------------------------------------
-# 6. الأقسام والخدمات للعملاء
-# ----------------------------------------------------
-@dp.callback_query_handler(text="buy_pubg")
-async def pubg_prices(call: types.CallbackQuery):
-    keyboard = InlineKeyboardMarkup(row_width=2)
-    keyboard.add(
-        InlineKeyboardButton("60 شدة - 1$", callback_data="pay_pubg_60"),
-        InlineKeyboardButton("325 شدة - 5$", callback_data="pay_pubg_325"),
-        InlineKeyboardButton("🔙 رجوع للقائمة", callback_data="back_to_main")
-    )
-    await call.message.edit_text("🎮 **قسم شدات ببجي موبايل**\nاختر الباقة المناسبة:", reply_markup=keyboard, parse_mode="Markdown")
-
-@dp.callback_query_handler(text="buy_freefire")
-async def freefire_prices(call: types.CallbackQuery):
-    keyboard = InlineKeyboardMarkup(row_width=2)
-    keyboard.add(
-        InlineKeyboardButton("100 جوهرة - 1$", callback_data="pay_ff_100"),
-        InlineKeyboardButton("🔙 رجوع للقائمة", callback_data="back_to_main")
-    )
-    await call.message.edit_text("🔥 **قسم جواهر فري فاير**\nاختر الباقة المناسبة:", reply_markup=keyboard, parse_mode="Markdown")
-
-@dp.callback_query_handler(text="buy_sim")
-async def sim_prices(call: types.CallbackQuery):
-    keyboard = InlineKeyboardMarkup(row_width=1)
-    keyboard.add(
-        InlineKeyboardButton("🇺🇸 رقم أمريكي واتساب - 2$", callback_data="pay_sim_us"),
-        InlineKeyboardButton("🔙 رجوع للقائمة", callback_data="back_to_main")
-    )
-    await call.message.edit_text("📞 **قسم الأرقام الوهمية والتفعيل** (@SIM_NUMBERS)\nاختر الرقم المطلوب:", reply_markup=keyboard, parse_mode="Markdown")
-
-# ----------------------------------------------------
-# 7. نظام الدفع اليدوي واستلام الإيصالات
-# ----------------------------------------------------
-@dp.callback_query_handler(lambda c: c.data and c.data.startswith('pay_'))
-async def process_checkout(call: types.CallbackQuery, state: FSMContext):
-    item_code = call.data
-    my_binance_pay_id = "459326037"
-    
-    text = (
-        f"🛒 **إتمام عملية الشراء**\n"
-        f"📦 **الطلب:** `{item_code}`\n\n"
-        "الرجاء تحويل المبلغ إلى حساب باينانس باي التالي:\n"
-        f"📌 **Binance Pay ID:** `{my_binance_pay_id}`\n\n"
-        "بعد التحويل، **قم بإرسال صورة إيصال الدفع** هنا في المحادثة لتأكيد طلبك."
-    )
-    await call.message.answer(text, parse_mode="Markdown")
-    await CheckoutState.waiting_for_receipt.set()
-    await call.answer()
-
-@dp.message_handler(state=CheckoutState.waiting_for_receipt, content_types=types.ContentTypes.PHOTO)
-async def receive_receipt(message: types.Message, state: FSMContext):
-    user_id = message.from_user.id
-    username = message.from_user.username or "بدون معرف"
-    photo_id = message.photo[-1].file_id
-    orders_channel = "@SPEDERCH"
-    
-    caption = f"🔔 **طلب شراء جديد بانتظار التأكيد**\n\n👤 **المستخدم:** @{username}\n🆔 **الايدي:** `{user_id}`"
-    
-    admin_keyboard = InlineKeyboardMarkup(row_width=2)
-    admin_keyboard.add(
-        InlineKeyboardButton("✅ قبول وتسليم", callback_data=f"accept_{user_id}"),
-        InlineKeyboardButton("❌ رفض الطلب", callback_data=f"reject_{user_id}")
-    )
-    
-    await bot.send_photo(chat_id=orders_channel, photo=photo_id, caption=caption, reply_markup=admin_keyboard, parse_mode="Markdown")
-    await message.answer("✅ **تم إرسال إيصال الدفع بنجاح!**\nجاري مراجعة الطلب من قبل الإدارة وتسليمك المنتج في أقرب وقت.")
-    await state.finish()
-
-@dp.callback_query_handler(lambda c: c.data and (c.data.startswith('accept_') or c.data.startswith('reject_')))
-async def admin_decision(call: types.CallbackQuery):
-    action, target_user_id = call.data.split('_')
-    target_user_id = int(target_user_id)
-    
-    if action == "accept":
-        try:
-            await bot.send_message(target_user_id, "🎉 **تم تأكيد دفعك بنجاح!**\nتم قبول طلبك، وجاري تسليم الخدمة لك الآن.")
-        except Exception:
-            pass
-        await call.message.edit_caption(caption=call.message.caption + "\n\n✅ **حالة الطلب: تم القبول والتسليم بنجاح**", reply_markup=None)
-        await call.answer("تم قبول الطلب!")
-    elif action == "reject":
-        try:
-            await bot.send_message(target_user_id, "❌ **عذراً، تم رفض طلبك.**\nيرجى التواصل مع الدعم الفني للاستفسار.")
-        except Exception:
-            pass
-        await call.message.edit_caption(caption=call.message.caption + "\n\n❌ **حالة الطلب: تم الرفض**", reply_markup=None)
-        await call.answer("تم رفض الطلب.")
-
-# ----------------------------------------------------
-# 8. الحساب الشخصي والأزرار العامة
-# ----------------------------------------------------
-@dp.callback_query_handler(text="my_account")
-async def user_account_info(call: types.CallbackQuery):
-    user_id = call.from_user.id
-    username = call.from_user.username or "لا يوجد"
-    balance = user_balances.get(user_id, 0.0)
-    
-    text = (
-        f"👤 **معلومات حسابك الشخصي:**\n\n"
-        f"🆔 الايدي: `{user_id}`\n"
-        f"🏷 المعرف: @{username}\n"
-        f"💰 رصيدك الحالي: `{balance}$`"
-    )
-    await call.message.answer(text, parse_mode="Markdown")
-    await call.answer()
-
-@dp.callback_query_handler(text="back_to_main")
-async def back_to_main_menu(call: types.CallbackQuery):
-    user_id = call.from_user.id
-    
-    # القائمة الرئيسية للعملاء
-    menu_keyboard = InlineKeyboardMarkup(row_width=2)
-    menu_keyboard.add(
-        InlineKeyboardButton("🎮 شدات ببجي (PUBG)", callback_data="buy_pubg"),
-        InlineKeyboardButton("🔥 جواهر فري فاير (Free Fire)", callback_data="buy_freefire"),
-        InlineKeyboardButton("📞 أرقام وهمية وتفعيل", callback_data="buy_sim"),
-        InlineKeyboardButton("👤 حسابي / الرصيد", callback_data="my_account")
-    )
-    
-    # إذا كان المستخدم هو المشرف، نضيف له زر لوحة التحكم أيضاً عند العودة
-    if user_id in ADMIN_IDS:
-        menu_keyboard.add(InlineKeyboardButton("⚙️ لوحة تحكم المشرفين", callback_data="admin_panel"))
-        
-    await call.message.edit_text("مرحباً بك مرة أخرى في القائمة الرئيسية 🛒✨\nاختر القسم المطلوب:", reply_markup=menu_keyboard, parse_mode="Markdown")
-
+# تشغيل البوت نهائياً
 if __name__ == '__main__':
     executor.start_polling(dp, skip_updates=True)
