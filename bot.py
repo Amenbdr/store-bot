@@ -9,9 +9,9 @@ from aiogram.dispatcher import FSMContext
 from aiogram.dispatcher.filters.state import State, StatesGroup
 
 # ==========================================
-# 1. إعدادات البوت والاتصال الأساسية
+# 1. إعدادات البوت والاتصال الأساسية (ملف موحد)
 # ==========================================
-API_TOKEN = "5418318795:AAE_s0NJw9IE1JWg6x9JuWQpl0MHDjcFCf8"  # ضع توكن بوتك هنا
+API_TOKEN = "5418318795:AAE_s0NJw9IE1JWg6x9JuWQpl0MHDjcFCf8"  # ضع توكن بوتك هنا فقط
 ADMIN_IDS = [5396793642]  # ضع آيدي المشرف الخاص بك هنا
 
 logging.basicConfig(level=logging.INFO)
@@ -19,6 +19,7 @@ bot = Bot(token=API_TOKEN)
 storage = MemoryStorage()
 dp = Dispatcher(bot, storage=storage)
 
+# قاعدة البيانات والإعدادات في مكان واحد لعدم حدوث أي تضارب
 database = {
     "settings": {
         "smsbower_api_key": "YOUR_SMSBOWER_API_KEY",
@@ -160,7 +161,7 @@ async def show_main_menu(message_or_call):
         await message_or_call.answer(text, reply_markup=keyboard, parse_mode="Markdown")
 
 # ==========================================
-# 5. قسم الأرقام والشراء وتصفح التطبيقات والدول
+# 5. تصفح الأرقام والدول
 # ==========================================
 @dp.callback_query_handler(text="buy_sim")
 async def buy_sim_menu(call: types.CallbackQuery):
@@ -289,7 +290,7 @@ async def check_sms_code(call: types.CallbackQuery):
         await call.answer(f"❌ خطأ: {e}", show_alert=True)
 
 # ==========================================
-# 7. لوحة تحكم المشرف وإدارة السيرفرات والأسعار
+# 7. لوحة تحكم المشرف وإدارة الأسعار
 # ==========================================
 @dp.callback_query_handler(text="admin_panel")
 async def admin_panel(call: types.CallbackQuery):
@@ -426,7 +427,7 @@ async def admin_save_new_price(message: types.Message, state: FSMContext):
         await message.answer("⚠️ خطأ! أرسل رقماً صالحاً (مثال: `1.5`):")
 
 # ==========================================
-# 8. إعدادات المستخدم وتحويل الرصيد
+# 8. إعدادات المستخدم والتحويلات
 # ==========================================
 @dp.callback_query_handler(text="user_settings_menu")
 async def user_settings_menu(call: types.CallbackQuery):
@@ -550,10 +551,13 @@ async def back_to_main(call: types.CallbackQuery, state: FSMContext):
 async def handle_unexpected_messages(message: types.Message):
     user_id = message.from_user.id
     db = load_db()
-    if user_id in db.get("verified_users", []) or user_id in ADMIN_IDS:
+    if user_id in db.get("verified_users", []) or user_id in ADMIN_IDs:
         await message.answer("ℹ️ يرجى استخدام الأزرار التفاعلية.")
     else:
         await message.answer("🔒 يرجى إتمام التحقق عبر /start أولاً.")
 
+# ==========================================
+# 9. التشغيل النهائي (ملف التشغيل الأوحد)
+# ==========================================
 if __name__ == '__main__':
     executor.start_polling(dp, skip_updates=True)
