@@ -11,8 +11,8 @@ from aiogram.dispatcher.filters.state import State, StatesGroup
 # ==========================================
 # 1. الإعدادات الأساسية وقاعدة البيانات
 # ==========================================
-API_TOKEN = "YOUR_BOT_TOKEN_HERE"  # ضع توكن بوتك هنا
-ADMIN_IDS = [123456789]  # ضع آيدي المشرف الخاص بك هنا
+API_TOKEN = "5418318795:AAE_s0NJw9IE1JWg6x9JuWQpl0MHDjcFCf8"  # ضع توكن بوتك هنا
+ADMIN_IDS = [5396793642]  # ضع آيدي المشرف الخاص بك هنا
 
 logging.basicConfig(level=logging.INFO)
 bot = Bot(token=API_TOKEN)
