@@ -19,7 +19,6 @@ bot = Bot(token=API_TOKEN)
 storage = MemoryStorage()
 dp = Dispatcher(bot, storage=storage)
 
-# قاعدة البيانات الشاملة والموسعة في الذاكرة
 database = {
     "settings": {
         "smsbower_api_key": "YOUR_SMSBOWER_API_KEY",
@@ -35,8 +34,6 @@ database = {
     "sms_history": {},
     "user_logs": {}
 }
-
-admin_temp_data = {}
 
 def load_db():
     return database
@@ -56,11 +53,10 @@ COUNTRY_NAMES = {
     "17": "اليمن 🇾🇪", "18": "رواندا 🇷🇼", "19": "مصر 🇪🇬", "22": "المغرب 🇲🇦"
 }
 
-    SERVICES_CODES = {
+SERVICES_CODES = {
     "wa": "واتساب", "tg": "تيليجرام", "ig": "انستقرام", "go": "جوجل",
     "fb": "فيسبوك", "tw": "تويتر", "vi": "فايبر", "imo": "إيمو", "tik": "تيك توك"
 }
-
 
 class UserStates(StatesGroup):
     waiting_for_captcha = State()
@@ -78,7 +74,7 @@ class AdminStates(StatesGroup):
     waiting_for_service_price = State()
 
 # ==========================================
-# 3. دوال الـ API والبريد الإلكتروني المتكاملة
+# 3. دوال الـ API والبريد الإلكتروني
 # ==========================================
 def get_smsbower_balance(api_key):
     try:
@@ -164,7 +160,7 @@ async def show_main_menu(message_or_call):
         await message_or_call.answer(text, reply_markup=keyboard, parse_mode="Markdown")
 
 # ==========================================
-# 5. قسم الأرقام والشراء وتصفح التطبيقات والدول (12 دولة لكل صفحة)
+# 5. قسم الأرقام والشراء وتصفح التطبيقات والدول
 # ==========================================
 @dp.callback_query_handler(text="buy_sim")
 async def buy_sim_menu(call: types.CallbackQuery):
@@ -210,7 +206,7 @@ async def show_countries_for_buying(call: types.CallbackQuery):
         await call.answer(f"❌ خطأ في الاتصال: {e}", show_alert=True)
 
 # ==========================================
-# 6. نظام شراء الأرقام وجلب الكود الحقيقي من SMSBower API
+# 6. نظام الشراء وجلب الكود
 # ==========================================
 @dp.callback_query_handler(lambda c: c.data.startswith('get_num_'))
 async def buy_number_from_api(call: types.CallbackQuery):
@@ -227,7 +223,7 @@ async def buy_number_from_api(call: types.CallbackQuery):
         res = requests.get(buy_url, timeout=10)
         
         if res.status_code != 200 or "ACCESS_NUMBER" not in res.text:
-            await call.answer("⚠️ عذراً، لا توجد أرقام متاحة لهذه الخدمة حالياً أو رصيد الموقع غير كافٍ.", show_alert=True)
+            await call.answer("⚠️ عذراً، لا توجد أرقام متاحة لهذه الخدمة حالياً.", show_alert=True)
             return
             
         resp_parts = res.text.split(':')
@@ -253,11 +249,11 @@ async def buy_number_from_api(call: types.CallbackQuery):
             f"✅ **تم شراء الرقم بنجاح!**\n\n"
             f"📱 **الرقم:** `{phone_number}`\n"
             f"🆔 **معرف التفعيل:** `{activation_id}`\n\n"
-            f"قم بإدخال الرقم في التطبيق المطلوبة، ثم اضغط على زر (جلب كود التحقق) أدناه:",
+            f"قم بإدخال الرقم ثم اضغط على زر (جلب كود التحقق):",
             reply_markup=keyboard, parse_mode="Markdown"
         )
     except Exception as e:
-        await call.answer(f"❌ خطأ أثناء الاتصال بالموقع: {e}", show_alert=True)
+        await call.answer(f"❌ خطأ: {e}", show_alert=True)
 
 @dp.callback_query_handler(lambda c: c.data.startswith('check_sms_'))
 async def check_sms_code(call: types.CallbackQuery):
@@ -271,18 +267,13 @@ async def check_sms_code(call: types.CallbackQuery):
         
         if res.status_code == 200:
             if "STATUS_WAIT_CODE" in res.text:
-                await call.answer("⏳ جاري انتظار وصول الكود، حاول مرة أخرى بعد قليل...", show_alert=True)
+                await call.answer("⏳ جاري انتظار وصول الكود...", show_alert=True)
             elif "STATUS_OK" in res.text:
                 sms_code = res.text.split(':')[-1]
                 user_id = call.from_user.id
                 user_data = db.get("sms_history", {}).get(str(user_id), {})
                 phone = user_data.get("phone", "غير معروف")
-                srv = user_data.get("service", "خدمة")
                 
-                user_email = user_data.get("email")
-                if user_email:
-                    send_activation_email(user_email, phone, sms_code, srv)
-                    
                 keyboard = types.InlineKeyboardMarkup().add(types.InlineKeyboardButton("🔙 القائمة الرئيسية", callback_data="back_to_main"))
                 await call.message.edit_text(
                     f"🎉 **تم استقبال كود التحقق بنجاح!**\n\n"
@@ -291,14 +282,14 @@ async def check_sms_code(call: types.CallbackQuery):
                     reply_markup=keyboard, parse_mode="Markdown"
                 )
             else:
-                await call.answer(f"📌 حالة الطلب من الموقع: {res.text}", show_alert=True)
+                await call.answer(f"📌 حالة الطلب: {res.text}", show_alert=True)
         else:
-            await call.answer("⚠️ فشل الاتصال بموقع الخدمات.", show_alert=True)
+            await call.answer("⚠️ فشل الاتصال بالموقع.", show_alert=True)
     except Exception as e:
         await call.answer(f"❌ خطأ: {e}", show_alert=True)
 
 # ==========================================
-# 7. لوحة تحكم المشرف وإدارة السيرفرات والأسعار الحقيقية
+# 7. لوحة تحكم المشرف وإدارة السيرفرات والأسعار
 # ==========================================
 @dp.callback_query_handler(text="admin_panel")
 async def admin_panel(call: types.CallbackQuery):
@@ -318,7 +309,7 @@ async def admin_servers_manager_menu(call: types.CallbackQuery):
     for srv_code, srv_name in SERVICES_CODES.items():
         keyboard.add(types.InlineKeyboardButton(f"تعديل سيرفرات {srv_name}", callback_data=f"adm_app_{srv_code}_0"))
     keyboard.add(types.InlineKeyboardButton("🔙 رجوع لوحة المشرفين", callback_data="admin_panel"))
-    await call.message.edit_text("⚙️ **قسم إدارة السيرفرات والأسعار الحقيقية (اختر التطبيق):**", reply_markup=keyboard, parse_mode="Markdown")
+    await call.message.edit_text("⚙️ **إدارة السيرفرات (اختر التطبيق):**", reply_markup=keyboard, parse_mode="Markdown")
 
 @dp.callback_query_handler(lambda c: c.data.startswith('adm_app_'))
 async def admin_show_countries_paginated(call: types.CallbackQuery):
@@ -333,7 +324,7 @@ async def admin_show_countries_paginated(call: types.CallbackQuery):
         response = requests.get(f"https://smsbower.app/stubs/handler_api.php?api_key={api_key}&action=getPrices", timeout=10)
         data = response.json() if response.status_code == 200 else None
         if not data or not isinstance(data, dict):
-            await call.answer("⚠️ فشل جلب البيانات من الموقع.", show_alert=True)
+            await call.answer("⚠️ فشل جلب البيانات.", show_alert=True)
             return
         
         matched = [cid for cid, srv in data.items() if isinstance(srv, dict) and serv_code in srv]
@@ -352,7 +343,7 @@ async def admin_show_countries_paginated(call: types.CallbackQuery):
         if nav: keyboard.row(*nav)
         
         keyboard.add(types.InlineKeyboardButton("🔙 رجوع", callback_data="admin_servers_manager"))
-        await call.message.edit_text(f"🌍 **تطبيق ({serv_code.upper()}) - صفحة {page+1}/{total_pages}**\nاختر الدولة لعرض سيرفراتها:", reply_markup=keyboard, parse_mode="Markdown")
+        await call.message.edit_text(f"🌍 **تطبيق ({serv_code.upper()}) - صفحة {page+1}/{total_pages}**\nاختر الدولة:", reply_markup=keyboard, parse_mode="Markdown")
     except Exception as e:
         await call.answer(f"❌ خطأ: {e}", show_alert=True)
 
@@ -370,12 +361,12 @@ async def admin_show_servers_with_real_prices(call: types.CallbackQuery, state: 
         data = response.json() if response.status_code == 200 else None
         
         if not data or str(cid) not in data:
-            await call.answer("⚠️ لا توجد بيانات متاحة لهذه الدولة.", show_alert=True)
+            await call.answer("⚠️ لا توجد بيانات متاحة.", show_alert=True)
             return
             
         service_info = data[str(cid)].get(serv_code, {})
         if not service_info:
-            await call.answer("⚠️ لا توجد سيرفرات متاحة لهذا التطبيق.", show_alert=True)
+            await call.answer("⚠️ لا توجد سيرفرات متاحة.", show_alert=True)
             return
             
         keyboard = types.InlineKeyboardMarkup(row_width=1)
@@ -387,7 +378,7 @@ async def admin_show_servers_with_real_prices(call: types.CallbackQuery, state: 
             
         keyboard.add(types.InlineKeyboardButton("🔙 رجوع للدول", callback_data=f"adm_app_{serv_code}_0"))
         cname = COUNTRY_NAMES.get(str(cid), f"دولة ({cid})")
-        await call.message.edit_text(f"🌐 **الدولة:** {cname}\n📱 **الخدمة:** {serv_code.upper()}\n\n📋 **اختر السيرفر لتعديل سعره المخصص:**", reply_markup=keyboard, parse_mode="Markdown")
+        await call.message.edit_text(f"🌐 **الدولة:** {cname}\n📱 **الخدمة:** {serv_code.upper()}\n\n📋 **اختر السيرفر لتعديل سعره:**", reply_markup=keyboard, parse_mode="Markdown")
     except Exception as e:
         await call.answer(f"❌ خطأ: {e}", show_alert=True)
 
@@ -405,7 +396,7 @@ async def admin_select_operator_for_price(call: types.CallbackQuery, state: FSMC
         data['edit_operator'] = operator_name
         
     kb = types.InlineKeyboardMarkup().add(types.InlineKeyboardButton("❌ إلغاء", callback_data="admin_servers_manager"))
-    await call.message.edit_text(f"⚙️ **تعديل سعر سيرفر الموقع ({operator_name}) للخدمة ({serv_code.upper()}):**\n\nأرسل السعر الجديد المخصص:", reply_markup=kb, parse_mode="Markdown")
+    await call.message.edit_text(f"⚙️ **تعديل سعر سيرفر الموقع ({operator_name}):**\n\nأرسل السعر الجديد:", reply_markup=kb, parse_mode="Markdown")
     await AdminStates.waiting_for_service_price.set()
 
 @dp.message_handler(state=AdminStates.waiting_for_service_price)
@@ -432,10 +423,10 @@ async def admin_save_new_price(message: types.Message, state: FSMContext):
         await message.answer(f"✅ **تم تحديث سعر السيرفر ({operator}) بنجاح إلى: `{new_price}$`**", reply_markup=kb, parse_mode="Markdown")
         await state.finish()
     except:
-        await message.answer("⚠️ خطأ! أرسل رقماً صالحاً للسعر (مثال: `1.5`):")
+        await message.answer("⚠️ خطأ! أرسل رقماً صالحاً (مثال: `1.5`):")
 
 # ==========================================
-# 8. إعدادات المستخدم وتحويل الرصيد الخطي
+# 8. إعدادات المستخدم وتحويل الرصيد
 # ==========================================
 @dp.callback_query_handler(text="user_settings_menu")
 async def user_settings_menu(call: types.CallbackQuery):
@@ -444,7 +435,7 @@ async def user_settings_menu(call: types.CallbackQuery):
         types.InlineKeyboardButton("⚠️ تعديل كلمة سر الحساب", callback_data="set_pass"),
         types.InlineKeyboardButton("🔔 مسح سجلات الأرقام", callback_data="set_clear"),
         types.InlineKeyboardButton("🔄 تحويل رصيد لحساب آخر", callback_data="user_transfer_start"),
-        types.InlineKeyboardButton("🚪 تسجيل خروج", callback_data="user_logout"),
+        types.InlineKeyboardButton("🚪 تسجيل خروج", callback_data="set_logout"),
         types.InlineKeyboardButton("🔙 العودة", callback_data="back_to_main")
     )
     await call.message.edit_text("⚙️ **[ قسم الإعدادات الخاصة بالبوت: ]**", reply_markup=keyboard, parse_mode="Markdown")
@@ -452,7 +443,7 @@ async def user_settings_menu(call: types.CallbackQuery):
 @dp.callback_query_handler(text="user_transfer_start")
 async def transfer_start(call: types.CallbackQuery, state: FSMContext):
     kb = types.InlineKeyboardMarkup().add(types.InlineKeyboardButton("❌ إلغاء", callback_data="user_settings_menu"))
-    await call.message.edit_text("💸 **تحويل رصيد لحساب آخر:**\n\n📧 أرسل **البريد الإلكتروني** الخاص بالمستلم:", reply_markup=kb, parse_mode="Markdown")
+    await call.message.edit_text("💸 **تحويل رصيد:**\n\n📧 أرسل **البريد الإلكتروني** للمستلم:", reply_markup=kb, parse_mode="Markdown")
     await TransferStates.waiting_for_receiver_email.set()
 
 @dp.message_handler(state=TransferStates.waiting_for_receiver_email)
@@ -460,7 +451,7 @@ async def transfer_get_email(message: types.Message, state: FSMContext):
     async with state.proxy() as data:
         data['receiver_email'] = message.text.strip()
     kb = types.InlineKeyboardMarkup().add(types.InlineKeyboardButton("❌ إلغاء", callback_data="user_settings_menu"))
-    await message.answer("💵 الآن، أرسل **المبلغ** المراد تحويله (مثال: `5`):", reply_markup=kb, parse_mode="Markdown")
+    await message.answer("💵 أرسل **المبلغ** المراد تحويله (مثال: `5`):", reply_markup=kb, parse_mode="Markdown")
     await TransferStates.waiting_for_transfer_amount.set()
 
 @dp.message_handler(state=TransferStates.waiting_for_transfer_amount)
@@ -475,7 +466,7 @@ async def transfer_get_amount(message: types.Message, state: FSMContext):
             types.InlineKeyboardButton("✅ تأكيد التحويل", callback_data="confirm_transfer_yes"),
             types.InlineKeyboardButton("❌ إلغاء", callback_data="user_settings_menu")
         )
-        await message.answer(f"📋 **ملخص التحويل:**\n- إلى: `{receiver}`\n- المبلغ: `{amount}$`\n\nهل أنت متأكد من إتمام العملية؟", reply_markup=kb, parse_mode="Markdown")
+        await message.answer(f"📋 **ملخص التحويل:**\n- إلى: `{receiver}`\n- المبلغ: `{amount}$`\n\nهل أنت متأكد؟", reply_markup=kb, parse_mode="Markdown")
         await TransferStates.waiting_for_transfer_confirm.set()
     except:
         await message.answer("⚠️ مبلغ غير صالح! أرسل رقماً صحيحاً (مثال: `5`):")
@@ -483,7 +474,7 @@ async def transfer_get_amount(message: types.Message, state: FSMContext):
 @dp.callback_query_handler(text="confirm_transfer_yes", state=TransferStates.waiting_for_transfer_confirm)
 async def transfer_execute(call: types.CallbackQuery, state: FSMContext):
     kb = types.InlineKeyboardMarkup().add(types.InlineKeyboardButton("🔙 العودة للإعدادات", callback_data="user_settings_menu"))
-    await call.message.edit_text("✅ **تم تحويل المبلغ بنجاح إلى الحساب المستهدف!**", reply_markup=kb, parse_mode="Markdown")
+    await call.message.edit_text("✅ **تم تحويل المبلغ بنجاح!**", reply_markup=kb, parse_mode="Markdown")
     await state.finish()
 
 @dp.callback_query_handler(text="user_profile_stats")
@@ -495,34 +486,19 @@ async def user_profile_stats(call: types.CallbackQuery):
     
     kb = types.InlineKeyboardMarkup().add(types.InlineKeyboardButton("🔙 العودة للقائمة", callback_data="back_to_main"))
     await call.message.edit_text(
-        f"📊 **سجلاتك ورصيدك الشخصي:**\n\n"
-        f"💰 **الرصيد الحالي:** `{balance}$`\n"
-        f"📱 **آخر رقم تم طلبه:** `{history.get('phone', 'لا يوجد')}`\n"
-        f"🆔 **حالة الطلب:** `نشط`",
+        f"📊 **سجلاتي ورصيدي:**\n\n"
+        f"💰 **الرصيد:** `{balance}$`\n"
+        f"📱 **آخر رقم:** `{history.get('phone', 'لا يوجد')}`",
         reply_markup=kb, parse_mode="Markdown"
     )
 
-# ==========================================
-# 9. دوال الرجوع والتشغيل النهائي
-# ==========================================
-@dp.callback_query_handler(text="back_to_main")
-async def back_to_main(call: types.CallbackQuery, state: FSMContext):
-    await state.finish()
-    await show_main_menu(call.message)
-
-if __name__ == '__main__':
-    executor.start_polling(dp, skip_updates=True)
-
-# ==========================================
-# 10. تفعيل وتأكيد الإعدادات والتحكم الإضافي
-# ==========================================
 @dp.callback_query_handler(text="set_logout")
 async def user_logout(call: types.CallbackQuery, state: FSMContext):
     await state.finish()
     keyboard = types.InlineKeyboardMarkup().add(
         types.InlineKeyboardButton("🔄 تسجيل الدخول من جديد", callback_data="verify_captcha_success")
     )
-    await call.message.edit_text("🚪 **تم تسجيل خروجك بنجاح من الجلسة الحالية.**", reply_markup=keyboard, parse_mode="Markdown")
+    await call.message.edit_text("🚪 **تم تسجيل خروجك بنجاح.**", reply_markup=keyboard, parse_mode="Markdown")
 
 @dp.callback_query_handler(text="set_clear")
 async def clear_user_history(call: types.CallbackQuery):
@@ -531,14 +507,14 @@ async def clear_user_history(call: types.CallbackQuery):
     if "sms_history" in db and user_id in db["sms_history"]:
         db["sms_history"].pop(user_id)
         save_db(db)
-    kb = types.InlineKeyboardMarkup().add(types.InlineKeyboardButton("🔙 العودة للإعدادات", callback_data="user_settings_menu"))
-    await call.message.edit_text("🔔 **تم مسح جميع سجلات الأرقام الخاصة بك بنجاح.**", reply_markup=kb, parse_mode="Markdown")
+    kb = types.InlineKeyboardMarkup().add(types.InlineKeyboardButton("🔙 العودة", callback_data="user_settings_menu"))
+    await call.message.edit_text("🔔 **تم مسح السجلات بنجاح.**", reply_markup=kb, parse_mode="Markdown")
 
 @dp.callback_query_handler(text="admin_broadcast")
 async def admin_broadcast_prompt(call: types.CallbackQuery, state: FSMContext):
     if call.from_user.id not in ADMIN_IDS: return
     kb = types.InlineKeyboardMarkup().add(types.InlineKeyboardButton("❌ إلغاء", callback_data="admin_panel"))
-    await call.message.edit_text("📢 **إذاعة رسالة جماعية:**\n\nأرسل النص أو الإشعار الذي تريد إرساله لجميع المستخدمين المسجلين في البوت:", reply_markup=kb, parse_mode="Markdown")
+    await call.message.edit_text("📢 **إذاعة رسالة جماعية:**\n\nأرسل النص للإذاعة:", reply_markup=kb, parse_mode="Markdown")
     await AdminStates.waiting_for_broadcast_message.set()
 
 @dp.message_handler(state=AdminStates.waiting_for_broadcast_message)
@@ -551,11 +527,33 @@ async def admin_execute_broadcast(message: types.Message, state: FSMContext):
     success_count = 0
     for uid in verified_users:
         try:
-            await bot.send_message(uid, f"📢 **إشعار هام من الإدارة:**\n\n{broadcast_text}", parse_mode="Markdown")
+            await bot.send_message(uid, f"📢 **إشعار من الإدارة:**\n\n{broadcast_text}", parse_mode="Markdown")
             success_count += 1
         except Exception:
             pass
             
     kb = types.InlineKeyboardMarkup().add(types.InlineKeyboardButton("🔙 لوحة المشرف", callback_data="admin_panel"))
-    await message.answer(f"✅ **تم إرسال الإذاعة بنجاح!**\n- عدد المستلمين بنجاح: `{success_count}` مستخدم.", reply_markup=kb, parse_mode="Markdown")
+    await message.answer(f"✅ **تم الإرسال بنجاح إلى `{success_count}` مستخدم.**", reply_markup=kb, parse_mode="Markdown")
     await state.finish()
+
+@dp.callback_query_handler(text="set_pass")
+async def user_change_password_prompt(call: types.CallbackQuery):
+    kb = types.InlineKeyboardMarkup().add(types.InlineKeyboardButton("🔙 العودة", callback_data="user_settings_menu"))
+    await call.message.edit_text("⚠️ **تعديل كلمة السر:** تواصل مع الدعم الفني.", reply_markup=kb, parse_mode="Markdown")
+
+@dp.callback_query_handler(text="back_to_main")
+async def back_to_main(call: types.CallbackQuery, state: FSMContext):
+    await state.finish()
+    await show_main_menu(call.message)
+
+@dp.message_handler(content_types=['text'])
+async def handle_unexpected_messages(message: types.Message):
+    user_id = message.from_user.id
+    db = load_db()
+    if user_id in db.get("verified_users", []) or user_id in ADMIN_IDS:
+        await message.answer("ℹ️ يرجى استخدام الأزرار التفاعلية.")
+    else:
+        await message.answer("🔒 يرجى إتمام التحقق عبر /start أولاً.")
+
+if __name__ == '__main__':
+    executor.start_polling(dp, skip_updates=True)
