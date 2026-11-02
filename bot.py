@@ -186,7 +186,8 @@ async def show_countries_for_buying(call: types.CallbackQuery):
             await call.answer("⚠️ فشل جلب البيانات من المزود.", show_alert=True)
             return
             
-        matched = [cid for cid, srv in data.items() if isinstance(srv, dict) and serv_code in srv]
+                matched = [cid for cid, srv in data.items() if isinstance(srv, dict) and serv_code in srv]
+
         PER_PAGE = 12
         total_pages = (len(matched) + PER_PAGE - 1) // PER_PAGE
         current_countries = matched[page * PER_PAGE : (page + 1) * PER_PAGE]
