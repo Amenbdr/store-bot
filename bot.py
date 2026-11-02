@@ -35,7 +35,8 @@ threading.Thread(target=run_server, daemon=True).start()
 # ----------------------------------------------------
 API_TOKEN = "5418318795:AAE_s0NJw9IE1JWg6x9JuWQpl0MHDjcFCf8"
 ADMIN_IDS = [5396793642]
-REQUIRED_CHANNEL = "@SIM_NUMBERS"
+REQUIRED_CHANNEL = "@SPEDERCH"
+LOG_CHANNEL_ID = "@SIM_NUMBERS"  # ضع هنا معرف قناتك الخاصة بالأرشيف
 
 logging.basicConfig(level=logging.INFO)
 
@@ -59,12 +60,16 @@ class AdminStates(StatesGroup):
     waiting_for_coupon_code = State()
     waiting_for_coupon_amount = State()
     waiting_for_sms_api_key = State()
+    waiting_for_new_country_id = State()
+    waiting_for_new_country_name = State()
 
 admin_temp_data = {}
 captcha_storage = {}
 temp_auth_data = {}
 
 # قاموس الدول مع الأعلام
+# قاموس جميع الدول مع الأعلام والأسماء العربية
+# قاموس جميع الدول مرتبة مع الأعلام والأسماء العربية
 COUNTRY_NAMES = {
     "0": "🇷🇺 روسيا",
     "1": "🇺🇸 الولايات المتحدة",
@@ -77,17 +82,71 @@ COUNTRY_NAMES = {
     "8": "🇰🇪 كينيا",
     "9": "🇻🇳 فيتنام",
     "10": "🇰🇬 قيرغيزستان",
+    "11": "🇹🇿 تنزانيا",
+    "12": "🇱🇰 سريلانكا",
+    "13": "🇮🇩 إندونيسيا",
+    "14": "🇵🇰 باكستان",
     "15": "🇬🇧 المملكة المتحدة",
+    "16": "🇸🇦 السعودية",
+    "17": "🇾🇪 اليمن",
+    "18": "🇷🇼 رواندا",
     "19": "🇪🇬 مصر",
+    "20": "🇮🇳 الهند",
+    "21": "🇲🇦 المغرب",
     "22": "🇳🇬 نيجيريا",
+    "23": "🇲🇴 ماكاو",
+    "24": "🇵🇱 بولندا",
+    "25": "🇦🇹 أستراليا",
+    "26": "🇮🇷 إيران",
+    "27": "🇰🇵 كوريا الشمالية",
+    "28": "🇩🇿 الجزائر",
+    "29": "🇹🇼 تايوان",
+    "30": "🇪🇸 إسبانيا",
+    "31": "🇸🇾 سوريا",
     "32": "🇷🇴 رومانيـا",
+    "33": "🇨🇴 كولومبيا",
+    "34": "🇪🇪 إستونيا",
+    "35": "🇦🇿 أذربيجان",
+    "36": "🇨🇦 كندا",
+    "37": "🇲🇦 المغرب",
+    "38": "🇬🇭 غانا",
+    "39": "🇦🇷 الأرجنتين",
     "40": "🇫🇷 فرنسا",
+    "41": "🇧🇷 البرازيل",
+    "42": "🇧🇬 بلغاريا",
     "43": "🇩🇪 ألمانيا",
+    "44": "🇱🇹 ليتوانيا",
+    "45": "🇮🇹 إيطاليا",
     "46": "🇪🇸 إسبانيا",
+    "47": "🇲🇼 ملاوي",
+    "48": "🇳🇱 هولندا",
+    "49": "🇱🇻 لاتفيا",
+    "50": "🇸🇪 السويد",
     "51": "🇲🇽 المكسيك",
     "52": "🇧🇷 البرازيل",
+    "53": "🇯🇴 الأردن",
+    "54": "🇫🇮 فنلندا",
+    "55": "🇻🇪 فنزويلا",
+    "56": "🇿🇦 جنوب أفريقيا",
+    "57": "🇷🇸 صربيا",
+    "58": "🇮🇶 العراق",
+    "59": "🇹🇷 تركيا",
+    "60": "🇨🇿 التشيك",
+    "61": "🇺🇦 أوكرانيا",
+    "62": "🇸🇰 سلوفاكيا",
+    "63": "🇰🇼 الكويت",
+    "64": "🇸🇦 السعودية",
+    "65": "🇦🇪 الإمارات",
+    "66": "🇧🇭 البحرين",
+    "67": "🇴🇲 عمان",
+    "68": "🇶🇦 قطر",
+    "69": "🇸🇩 السودان",
+    "70": "🇱🇾 ليبيا",
+    "71": "🇹🇳 تونس",
+    "72": "🇱🇧 لبنان",
     "73": "🇺🇦 أوكرانيا",
 }
+
 
 def get_main_menu(user_id):
     menu_keyboard = InlineKeyboardMarkup(row_width=2)
@@ -460,33 +519,35 @@ async def buy_sim_menu(call: types.CallbackQuery):
 
     try:
         prices_url = f"https://smsbower.app/stubs/handler_api.php?api_key={api_key}&action=getPrices"
-        response = requests.get(prices_url, timeout=10)
+        response = requests.get(prices_url, timeout=8)
         data = response.json() if response.headers.get('content-type', '').startswith('application/json') else None
-        
         if data and isinstance(data, dict):
             admin_temp_data[f"prices_{call.from_user.id}"] = data
-            
-            count = 0
-            for country_id in data.keys():
-                if count >= 24: break 
-                country_label = COUNTRY_NAMES.get(str(country_id), f"🌍 دولة ({country_id})")
-                keyboard.insert(InlineKeyboardButton(country_label, callback_data=f"sel_country_{country_id}"))
-                count += 1
-                
     except Exception as e:
-        logging.error(f"Error fetching countries: {e}")
+        logging.error(f"Error fetching prices: {e}")
+
+    for country_id, country_name in COUNTRY_NAMES.items():
+        keyboard.insert(InlineKeyboardButton(country_name, callback_data=f"sel_country_{country_id}"))
         
     keyboard.add(InlineKeyboardButton("🔙 رجوع للقائمة الرئيسية", callback_data="back_to_main"))
     
-    await call.message.edit_text(
-        "📱 **قسم الأرقام الوهمية والتفعيل:**\n\n"
-        "اختر **الدولة** المطلوبة من الأزرار أدناه لعرض الخدمات والسيرفرات المتوفرة:",
-        reply_markup=keyboard, 
-        parse_mode="Markdown"
-    )
+    try:
+        await call.message.edit_text(
+            "📱 **قسم الأرقام الوهمية والتفعيل:**\n\n"
+            "اختر **الدولة** المطلوبة من الأزرار أدناه لعرض الخدمات والسيرفرات المتوفرة:",
+            reply_markup=keyboard, 
+            parse_mode="Markdown"
+        )
+    except:
+        await call.message.answer(
+            "📱 **قسم الأرقام الوهمية والتفعيل:**\n\n"
+            "اختر **الدولة** المطلوبة من الأزرار أدناه لعرض الخدمات والسيرفرات المتوفرة:",
+            reply_markup=keyboard, 
+            parse_mode="Markdown"
+        )
 
 # ----------------------------------------------------
-# 6. اختيار الدولة ثم عرض الخدمات (واتساب وتيليجرام) بالأسعار الخاصة بك
+# 6. اختيار الدولة ثم عرض الخدمات والأسعار المخصصة
 # ----------------------------------------------------
 @dp.callback_query_handler(lambda c: c.data.startswith('sel_country_'))
 async def process_country_selection(call: types.CallbackQuery):
@@ -501,8 +562,11 @@ async def process_country_selection(call: types.CallbackQuery):
     services = data[country_id]
     country_name = COUNTRY_NAMES.get(str(country_id), f"دولة ({country_id})")
     
+    db = load_db()
+    custom_prices = db.get("custom_prices", {"wa": 0.50, "tg": 0.50, "ig": 0.40})
+    
     keyboard = InlineKeyboardMarkup(row_width=1)
-    target_services = {"wa": "واتساب 🟢", "tg": "تيليجرام 🔵"}
+    target_services = {"wa": "واتساب 🟢", "tg": "تيليجرام 🔵", "ig": "انستقرام 🟣"}
     
     available_count = 0
     for serv_code, serv_info in services.items():
@@ -511,9 +575,7 @@ async def process_country_selection(call: types.CallbackQuery):
             
             if stock > 0 and serv_code in target_services:
                 serv_display_name = target_services[serv_code]
-                
-                # السعر الثابت للبيع للعملاء
-                display_price = 0.50 if serv_code == "wa" else 0.50
+                display_price = custom_prices.get(serv_code, 0.50)
                 
                 btn_text = f"{serv_display_name} | 💰 السعر: {display_price}$ | 📦 المتاح: {stock}"
                 keyboard.add(InlineKeyboardButton(btn_text, callback_data=f"buy_serv_{country_id}_{serv_code}_{display_price}"))
@@ -533,7 +595,7 @@ async def process_country_selection(call: types.CallbackQuery):
     )
 
 # ----------------------------------------------------
-# 7. تأكيد الشراء التلقائي وتفعيل الطلب وإرسال التنسيق المطابق للصورة
+# 7. تأكيد الشراء التلقائي وتفعيل الطلب
 # ----------------------------------------------------
 @dp.callback_query_handler(lambda c: c.data.startswith('buy_serv_'))
 async def process_server_buy_request(call: types.CallbackQuery, state: FSMContext):
@@ -542,7 +604,7 @@ async def process_server_buy_request(call: types.CallbackQuery, state: FSMContex
     service_code = parts[3]
     price = float(parts[4])
     
-    item_name = "واتساب 🟢" if service_code == "wa" else "تيليجرام 🔵"
+    item_name = "واتساب 🟢" if service_code == "wa" else ("تيليجرام 🔵" if service_code == "tg" else "انستقرام 🟣")
     country_name = COUNTRY_NAMES.get(str(country_id), f"دولة {country_id}")
     
     admin_temp_data[str(call.from_user.id)] = {
@@ -622,13 +684,13 @@ async def execute_sms_order(call: types.CallbackQuery, state: FSMContext):
                 "activation_id": activation_id,
                 "phone": phone_number,
                 "item": item_name,
-                "price": price
+                "price": price,
+                "country_name": country_name
             }
             save_db(db)
             
             order_kb = InlineKeyboardMarkup(row_width=1)
             order_kb.add(
-                InlineKeyboardButton("👁️ رؤية حالة الرقم في واتساب", callback_data=f"check_whatsapp_status_{phone_number}"),
                 InlineKeyboardButton("🔄 تغير الرقم", callback_data="buy_sim"),
                 InlineKeyboardButton("✳️ تحديث.", callback_data="check_sms_code"),
                 InlineKeyboardButton("⚠️ إلغاء.", callback_data="cancel_sms_order"),
@@ -643,7 +705,7 @@ async def execute_sms_order(call: types.CallbackQuery, state: FSMContext):
                 f"🌐 | الحالة : Pending ⋯\n"
                 f"💵 | السعر : `{price} P`\n"
                 f"☑️ | اضغط على الرقم لنسخه!\n"
-                f"🛜 | أدخل الرقم في الواتساب لوصول الكود، ثم اضغط على زر تحديث."
+                f"🛜 | أدخل الرقم في التطبيق لوصول الكود، ثم اضغط على زر تحديث."
             )
             
             await call.message.edit_text(success_text, reply_markup=order_kb, parse_mode="Markdown")
@@ -669,7 +731,7 @@ async def cancel_sms_order_handler(call: types.CallbackQuery):
     await back_to_main_menu(call, FSMContext(dp, storage, call.from_user.id, call.message.chat.id))
 
 # ----------------------------------------------------
-# 8. جلب كود التحقق وتنبيه العميل بالشكل المطلوب
+# 8. جلب كود التحقق وإرسال التقرير الاحترافي للقناة
 # ----------------------------------------------------
 @dp.callback_query_handler(text="check_sms_code")
 async def check_sms_code_handler(call: types.CallbackQuery):
@@ -685,6 +747,7 @@ async def check_sms_code_handler(call: types.CallbackQuery):
     phone_number = order_data["phone"]
     item_name = order_data.get("item", "واتساب")
     price = order_data.get("price", 0.0)
+    country_name = order_data.get("country_name", "الدولة")
     
     api_key = db.get("settings", {}).get("smsbower_api_key")
     if not api_key:
@@ -728,6 +791,30 @@ async def check_sms_code_handler(call: types.CallbackQuery):
             except:
                 await call.message.answer(formatted_text, reply_markup=kb, parse_mode="Markdown")
                 
+            # إرسال التقرير الاحترافي للقناة بتنسيق مطابق تماماً للصورة
+            try:
+                masked_phone = f"...{phone_number[-8:]}" if len(phone_number) > 8 else phone_number
+                masked_user = f"...{user_id[-7:]}" if len(user_id) > 7 else user_id
+                
+                channel_kb = InlineKeyboardMarkup().add(
+                    InlineKeyboardButton("🤖 شراء رقم من نفس السيرفر 🌐", url=f"https://t.me/{(await bot.get_me()).username}")
+                )
+                
+                log_text = (
+                    f"『 **SUPER SIM BOT** 』 ≡ تفعيلات - 📢\n\n"
+                    f"☑️ - تم شراء رقم من البوت بنجاح 🔊\n\n"
+                    f"🌐 - السيرفر : العروض\n"
+                    f"🇸🇦 - الدولة : {country_name}\n"
+                    f"✅ - تطبيق : {item_name}\n"
+                    f"☎️ - الرقم : `+{masked_phone}`\n"
+                    f"💵 - السعر : `{price:.2f} P`\n"
+                    f"🆔 - العميل : `{masked_user}`\n\n"
+                    f"📬 - رسالة الكود : {{ `{sms_code}` }} +"
+                )
+                await bot.send_message(chat_id=LOG_CHANNEL_ID, text=log_text, reply_markup=channel_kb, parse_mode="Markdown")
+            except Exception as e:
+                logging.error(f"Failed to send log to channel: {e}")
+                
             if user_id in db["active_orders"]:
                 del db["active_orders"][user_id]
                 save_db(db)
@@ -738,7 +825,9 @@ async def check_sms_code_handler(call: types.CallbackQuery):
     except Exception as e:
         await call.answer(f"❌ حدث خطأ أثناء الاتصال بالموقع: {str(e)}", show_alert=True)
 
-# الألعاب والأقسام الفرعية الأخرى
+# ----------------------------------------------------
+# الألعاب وأقسام الشحن
+# ----------------------------------------------------
 @dp.callback_query_handler(text="buy_games")
 async def buy_games_menu(call: types.CallbackQuery):
     keyboard = InlineKeyboardMarkup(row_width=2).add(
@@ -798,7 +887,7 @@ async def process_coupon_code(message: types.Message, state: FSMContext):
         await message.answer("⚠️ الكود غير صالح:")
 
 # ----------------------------------------------------
-# 9. لوحة تحكم المشرفين المتكاملة (المطابقة للصورة)
+# 9. لوحة تحكم المشرفين المتكاملة وإدارة الدول والأسعار
 # ----------------------------------------------------
 @dp.callback_query_handler(text="admin_panel")
 async def open_admin_panel(call: types.CallbackQuery):
@@ -814,15 +903,8 @@ async def open_admin_panel(call: types.CallbackQuery):
         InlineKeyboardButton("♻️ إضافة رصيد", callback_data="adm_add_balance")
     )
     admin_keyboard.add(
-        InlineKeyboardButton("🖋️ فتح وقفل الأقسام", callback_data="adm_toggle_sections"),
+        InlineKeyboardButton("⚙️ إدارة السيرفرات والأسعار", callback_data="admin_servers_manager"),
         InlineKeyboardButton("👤 إحصائيات البوت 🌐", callback_data="adm_stats")
-    )
-    admin_keyboard.add(
-        InlineKeyboardButton("⛔ تقييد عضو", callback_data="adm_ban_user"),
-        InlineKeyboardButton("🔓 فك تقييد عضو", callback_data="adm_unban_user")
-    )
-    admin_keyboard.add(
-        InlineKeyboardButton("✅ فك تقييد عضو عبر الايدي", callback_data="adm_unban_id")
     )
     admin_keyboard.add(
         InlineKeyboardButton("👥 عدد المشتركين", callback_data="adm_users_count"),
@@ -830,14 +912,7 @@ async def open_admin_panel(call: types.CallbackQuery):
     )
     admin_keyboard.add(
         InlineKeyboardButton("⤵️ رفع وحذف API", callback_data="sms_section_menu"),
-        InlineKeyboardButton("🗑️ تنظيف البوت", callback_data="adm_clean_bot")
-    )
-    admin_keyboard.add(
-        InlineKeyboardButton("🎂 الكشف عن الرصيد", callback_data="check_sms_balance")
-    )
-    admin_keyboard.add(
-        InlineKeyboardButton("🛑 حذف وكيل", callback_data="adm_del_agent"),
-        InlineKeyboardButton("👮‍♂️ إضافة وكيل", callback_data="adm_add_agent")
+        InlineKeyboardButton("🎂 فحص رصيد الموقع", callback_data="check_sms_balance")
     )
     admin_keyboard.add(
         InlineKeyboardButton("🔙 القائمة الرئيسية", callback_data="back_to_main")
@@ -850,13 +925,190 @@ async def open_admin_panel(call: types.CallbackQuery):
     except:
         await call.message.answer(admin_text, reply_markup=admin_keyboard, parse_mode="Markdown")
 
-@dp.callback_query_handler(text="sms_section_menu")
-async def sms_section_menu(call: types.CallbackQuery):
+# إدارة السيرفرات والأسعار من لوحة التحكم
+@dp.callback_query_handler(text="admin_servers_manager")
+async def admin_servers_manager_handler(call: types.CallbackQuery):
     if call.from_user.id not in ADMIN_IDS: return
     
     db = load_db()
+    custom_prices = db.get("custom_prices", {"wa": 0.50, "tg": 0.50, "ig": 0.40})
+    
+    keyboard = InlineKeyboardMarkup(row_width=1)
+    keyboard.add(
+        InlineKeyboardButton(f"🟢 واتساب (WA) - السعر: {custom_prices.get('wa', 0.50)}$", callback_data="edit_price_wa"),
+        InlineKeyboardButton(f"🔵 تيليجرام (TG) - السعر: {custom_prices.get('tg', 0.50)}$", callback_data="edit_price_tg"),
+        InlineKeyboardButton(f"🟣 انستقرام (IG) - السعر: {custom_prices.get('ig', 0.40)}$", callback_data="edit_price_ig")
+    )
+    keyboard.add(InlineKeyboardButton("🔙 رجوع لوحة المشرفين", callback_data="admin_panel"))
+    
+    await call.message.edit_text(
+        "⚙️ **قسم إدارة السيرفرات والأسعار:**\n\n"
+        "اختر السيرفر لتعديل سعر البيع للمستخدمين:",
+        reply_markup=keyboard, parse_mode="Markdown"
+    )
+
+@dp.callback_query_handler(lambda c: c.data.startswith('edit_price_'))
+async def edit_service_price_start(call: types.CallbackQuery, state: FSMContext):
+    if call.from_user.id not in ADMIN_IDS: return
+    serv_code = call.data.split('_')[2]
+    
+    async with state.proxy() as data:
+        data['editing_serv_code'] = serv_code
+        
+    kb = InlineKeyboardMarkup().add(InlineKeyboardButton("❌ إلغاء", callback_data="admin_servers_manager"))
+    await call.message.edit_text(
+        f"💰 **تعديل سعر السيرفر (`{serv_code.upper()}`):**\n\nأرسل السعر الجديد بالدولار (مثال: `0.50`):",
+        reply_markup=kb, parse_mode="Markdown"
+    )
+    await AdminStates.waiting_for_coupon_amount.set()
+
+@dp.message_handler(state=AdminStates.waiting_for_coupon_amount)
+async def save_new_service_price(message: types.Message, state: FSMContext):
+    if message.from_user.id not in ADMIN_IDS: return
+    try:
+        new_price = float(message.text.strip())
+        data = await state.get_data()
+        serv_code = data.get('editing_serv_code')
+        
+        db = load_db()
+        if "custom_prices" not in db: db["custom_prices"] = {}
+        db["custom_prices"][serv_code] = new_price
+        save_db(db)
+        
+        kb = InlineKeyboardMarkup().add(InlineKeyboardButton("🔙 رجوع لإدارة السيرفرات", callback_data="admin_servers_manager"))
+        await message.answer(f"✅ **تم تحديث السعر بنجاح إلى:** `{new_price}$`", reply_markup=kb, parse_mode="Markdown")
+        await state.finish()
+    except Exception as e:
+        await message.answer("⚠️ قيمة غير صالحة، أرسل رقماً صحيحاً للسعر (مثال: 0.50):")
+
+# إدارة الدول (إضافة / حذف)
+@dp.callback_query_handler(text="adm_add_country_custom")
+async def adm_add_country_start(call: types.CallbackQuery, state: FSMContext):
+    if call.from_user.id not in ADMIN_IDS: return
+    await state.finish()
+    kb = InlineKeyboardMarkup().add(InlineKeyboardButton("❌ إلغاء", callback_data="admin_panel"))
+    await call.message.edit_text("🌍 **إضافة دولة جديدة:**\n\nأرسل **أيدي (ID) الدولة** في موقع SMSBower:", reply_markup=kb, parse_mode="Markdown")
+    await AdminStates.waiting_for_new_country_id.set()
+
+@dp.message_handler(state=AdminStates.waiting_for_new_country_id)
+async def adm_add_country_id_step(message: types.Message, state: FSMContext):
+    if message.from_user.id not in ADMIN_IDS: return
+    country_id = message.text.strip()
+    async with state.proxy() as data:
+        data['new_country_id'] = country_id
+    kb = InlineKeyboardMarkup().add(InlineKeyboardButton("❌ إلغاء", callback_data="admin_panel"))
+    await message.answer("📝 أرسل **اسم الدولة مع العلم** (مثال: `🇸🇦 السعودية`):", reply_markup=kb, parse_mode="Markdown")
+    await AdminStates.waiting_for_new_country_name.set()
+
+@dp.message_handler(state=AdminStates.waiting_for_new_country_name)
+async def adm_add_country_name_step(message: types.Message, state: FSMContext):
+    if message.from_user.id not in ADMIN_IDS: return
+    country_name = message.text.strip()
+    data = await state.get_data()
+    country_id = data.get('new_country_id')
+    
+    COUNTRY_NAMES[country_id] = country_name
+    db = load_db()
+    if "custom_countries" not in db: db["custom_countries"] = {}
+    db["custom_countries"][country_id] = country_name
+    save_db(db)
+    
+    kb = InlineKeyboardMarkup().add(InlineKeyboardButton("🔙 لوحة المشرفين", callback_data="admin_panel"))
+    await message.answer(f"✅ **تمت إضافة الدولة ({country_name}) بنجاح!**", reply_markup=kb, parse_mode="Markdown")
+    await state.finish()
+
+@dp.callback_query_handler(text="adm_del_country")
+async def adm_del_country_menu(call: types.CallbackQuery):
+    if call.from_user.id not in ADMIN_IDS: return
+    kb = InlineKeyboardMarkup(row_width=2)
+    for c_id, c_name in COUNTRY_NAMES.items():
+        kb.insert(InlineKeyboardButton(f"🗑️ {c_name}", callback_data=f"del_c_{c_id}"))
+    kb.add(InlineKeyboardButton("🔙 رجوع لوحة التحكم", callback_data="admin_panel"))
+    await call.message.edit_text("🗑️ **اختر الدولة المراد حذفها:**", reply_markup=kb, parse_mode="Markdown")
+
+@dp.callback_query_handler(lambda c: c.data.startswith('del_c_'))
+async def process_delete_country(call: types.CallbackQuery):
+    if call.from_user.id not in ADMIN_IDS: return
+    c_id = call.data.split('_')[2]
+    if c_id in COUNTRY_NAMES:
+        removed_name = COUNTRY_NAMES.pop(c_id)
+        db = load_db()
+        if "custom_countries" in db and c_id in db["custom_countries"]:
+            del db["custom_countries"][c_id]
+            save_db(db)
+        await call.answer(f"✅ تم حذف ({removed_name}) بنجاح!", show_alert=True)
+        await adm_del_country_menu(call)
+
+# إدارة الأرصدة عبر المشرفين
+@dp.callback_query_handler(text="adm_add_balance")
+async def adm_add_1(call: types.CallbackQuery, state: FSMContext):
+    if call.from_user.id not in ADMIN_IDS: return
+    await state.finish()
+    kb = InlineKeyboardMarkup().add(InlineKeyboardButton("❌ إلغاء", callback_data="admin_panel"))
+    await call.message.edit_text("أرسل أيدي المستخدم المراد إضافة رصيد له:", reply_markup=kb)
+    await AdminStates.waiting_for_add_id.set()
+
+@dp.message_handler(state=AdminStates.waiting_for_add_id)
+async def adm_add_2(message: types.Message, state: FSMContext):
+    if message.from_user.id not in ADMIN_IDS: return
+    try:
+        target_id = message.text.strip()
+        async with state.proxy() as data:
+            data['target_id'] = target_id
+        kb = InlineKeyboardMarkup().add(InlineKeyboardButton("❌ إلغاء", callback_data="admin_panel"))
+        await message.answer("أرسل المبلغ المراد إضافته (بالدولار):", reply_markup=kb)
+        await AdminStates.waiting_for_add_amount.set()
+    except Exception as e:
+        await message.answer(f"⚠️ خطأ: {e}")
+
+@dp.message_handler(state=AdminStates.waiting_for_add_amount)
+async def adm_add_3(message: types.Message, state: FSMContext):
+    if message.from_user.id not in ADMIN_IDS: return
+    try:
+        amount = float(message.text.strip())
+        data = await state.get_data()
+        target_id = data.get('target_id')
+        db = load_db()
+        if target_id not in db["users"]: db["users"][target_id] = {"balance": 0.0, "name": "User"}
+        db["users"][target_id]["balance"] += amount
+        save_db(db)
+        kb = InlineKeyboardMarkup().add(InlineKeyboardButton("🔙 لوحة المشرفين", callback_data="admin_panel"))
+        await message.answer(f"✅ تمت إضافة `{amount}$` للمستخدم `{target_id}` بنجاح.", reply_markup=kb, parse_mode="Markdown")
+        await state.finish()
+    except:
+        await message.answer("⚠️ أرسل رقماً صحيحاً للمبلغ:")
+
+@dp.callback_query_handler(text="adm_sub_balance")
+async def adm_sub_1(call: types.CallbackQuery, state: FSMContext):
+    if call.from_user.id not in ADMIN_IDS: return
+    await state.finish()
+    kb = InlineKeyboardMarkup().add(InlineKeyboardButton("❌ إلغاء", callback_data="admin_panel"))
+    await call.message.edit_text("أرسل أيدي المستخدم المراد خصم رصيد منه:", reply_markup=kb)
+    await AdminStates.waiting_for_sub_amount.set()
+
+@dp.message_handler(state=AdminStates.waiting_for_sub_amount)
+async def adm_sub_2(message: types.Message, state: FSMContext):
+    if message.from_user.id not in ADMIN_IDS: return
+    try:
+        target_id = message.text.strip()
+        db = load_db()
+        if target_id in db["users"]:
+            current_bal = db["users"][target_id].get("balance", 0.0)
+            db["users"][target_id]["balance"] = max(0.0, current_bal - 1.0)
+            save_db(db)
+            await message.answer(f"✅ تم خصم 1$ بنجاح للمستخدم `{target_id}`. الرصيد الجديد: `{db['users'][target_id]['balance']}$`")
+        else:
+            await message.answer("⚠️ المستخدم غير موجود.")
+        await state.finish()
+    except Exception as e:
+        await message.answer(f"⚠️ حدث خطأ: {e}")
+
+@dp.callback_query_handler(text="sms_section_menu")
+async def sms_section_menu(call: types.CallbackQuery):
+    if call.from_user.id not in ADMIN_IDS: return
+    db = load_db()
     api_key = db.get("settings", {}).get("smsbower_api_key")
-    status_display = f"`{api_key}`" if api_key else "❌ غير مُعين حالياً"
+    status_display = f"`{api_key}`" if api_key else "❌ غير مُعين"
     
     keyboard = InlineKeyboardMarkup(row_width=2)
     keyboard.add(
@@ -866,32 +1118,25 @@ async def sms_section_menu(call: types.CallbackQuery):
     keyboard.add(InlineKeyboardButton("💰 فحص رصيد الموقع عبر API", callback_data="check_sms_balance"))
     keyboard.add(InlineKeyboardButton("🔙 رجوع لوحة المشرفين", callback_data="admin_panel"))
     
-    await call.message.edit_text(
-        f"🌐 **قسم إدارة وتوصيل موقع SMSBower API**\n\n"
-        f"🔑 مفتاح الـ API المسجل: {status_display}\n\n"
-        f"يمكنك التحكم بإعدادات الربط واستعراض بيانات الموقع عبر الأزرار أدناه:",
-        reply_markup=keyboard, parse_mode="Markdown"
-    )
+    await call.message.edit_text(f"🌐 **إدارة SMSBower API**\n\nالمفتاح الحالي: {status_display}", reply_markup=keyboard, parse_mode="Markdown")
 
 @dp.callback_query_handler(text="set_sms_api")
 async def set_sms_api_start(call: types.CallbackQuery):
     if call.from_user.id not in ADMIN_IDS: return
     kb = InlineKeyboardMarkup().add(InlineKeyboardButton("❌ إلغاء", callback_data="sms_section_menu"))
-    await call.message.edit_text("🔑 **إضافة / تعديل مفتاح SMSBower API**\n\nالرجاء إرسال مفتاح الـ API الجديد في رسالة الآن:", reply_markup=kb, parse_mode="Markdown")
+    await call.message.edit_text("🔑 أرسل مفتاح الـ API الجديد:", reply_markup=kb, parse_mode="Markdown")
     await AdminStates.waiting_for_sms_api_key.set()
 
 @dp.message_handler(state=AdminStates.waiting_for_sms_api_key)
 async def save_sms_api_key(message: types.Message, state: FSMContext):
     if message.from_user.id not in ADMIN_IDS: return
     new_api_key = message.text.strip()
-    
     db = load_db()
     if "settings" not in db: db["settings"] = {}
     db["settings"]["smsbower_api_key"] = new_api_key
     save_db(db)
-    
-    kb = InlineKeyboardMarkup().add(InlineKeyboardButton("🔙 رجوع لقسم SMSBower", callback_data="sms_section_menu"))
-    await message.answer(f"✅ **تم حفظ مفتاح SMSBower API بنجاح!**\n\n🔑 المفتاح: `{new_api_key}`", reply_markup=kb, parse_mode="Markdown")
+    kb = InlineKeyboardMarkup().add(InlineKeyboardButton("🔙 رجوع", callback_data="sms_section_menu"))
+    await message.answer(f"✅ تم حفظ المفتاح بنجاح: `{new_api_key}`", reply_markup=kb, parse_mode="Markdown")
     await state.finish()
 
 @dp.callback_query_handler(text="delete_sms_api")
@@ -901,7 +1146,7 @@ async def delete_sms_api_key(call: types.CallbackQuery):
     if "settings" in db and "smsbower_api_key" in db["settings"]:
         db["settings"]["smsbower_api_key"] = None
         save_db(db)
-    await call.answer("🗑️ تم حذف مفتاح الـ API بنجاح!", show_alert=True)
+    await call.answer("🗑️ تم حذف المفتاح بنجاح!", show_alert=True)
     await sms_section_menu(call)
 
 @dp.callback_query_handler(text="check_sms_balance")
@@ -918,84 +1163,26 @@ async def check_smsbower_balance(call: types.CallbackQuery):
         result_text = response.text.strip()
         if "ACCESS_BALANCE" in result_text or result_text.replace('.', '', 1).isdigit():
             balance_val = result_text.split(":")[-1] if ":" in result_text else result_text
-            kb = InlineKeyboardMarkup().add(InlineKeyboardButton("🔙 رجوع لوحة المشرفين", callback_data="admin_panel"))
-            await call.message.edit_text(f"📊 **حالة رصيد موقع SMSBower:**\n\n💰 الرصيد الحالي: `{balance_val}`\n🌐 الحالة: متصل بنجاح ✅", reply_markup=kb, parse_mode="Markdown")
+            kb = InlineKeyboardMarkup().add(InlineKeyboardButton("🔙 لوحة المشرفين", callback_data="admin_panel"))
+            await call.message.edit_text(f"📊 **رصيد موقع SMSBower:**\n\n💰 `{balance_val}`", reply_markup=kb, parse_mode="Markdown")
         else:
             await call.answer(f"⚠️ رد غير متوقع: {result_text}", show_alert=True)
     except Exception as e:
-        await call.answer(f"❌ حدث خطأ: {str(e)}", show_alert=True)
+        await call.answer(f"❌ خطأ: {str(e)}", show_alert=True)
 
-@dp.callback_query_handler(text="adm_add_balance")
-async def adm_add_1(call: types.CallbackQuery):
-    if call.from_user.id not in ADMIN_IDS: return
-    kb = InlineKeyboardMarkup().add(InlineKeyboardButton("❌ إلغاء", callback_data="admin_panel"))
-    await call.message.edit_text("أرسل أيدي المستخدم المراد إضافة رصيد له:", reply_markup=kb)
-    await AdminStates.waiting_for_add_id.set()
-
-@dp.message_handler(state=AdminStates.waiting_for_add_id)
-async def adm_add_2(message: types.Message, state: FSMContext):
-    try:
-        admin_temp_data['target_id'] = int(message.text.strip())
-        kb = InlineKeyboardMarkup().add(InlineKeyboardButton("❌ إلغاء", callback_data="admin_panel"))
-        await message.answer("أرسل المبلغ المراد إضافته (بالدولار):", reply_markup=kb)
-        await AdminStates.waiting_for_add_amount.set()
-    except:
-        await message.answer("⚠️ أيدي غير صالح، أرسل أيدي رقمي صحيح:")
-
-@dp.message_handler(state=AdminStates.waiting_for_add_amount)
-async def adm_add_3(message: types.Message, state: FSMContext):
-    try:
-        amount = float(message.text.strip())
-        target_id = str(admin_temp_data.get('target_id'))
-        db = load_db()
-        if target_id not in db["users"]: db["users"][target_id] = {"balance": 0.0, "name": "User"}
-        db["users"][target_id]["balance"] += amount
-        save_db(db)
-        kb = InlineKeyboardMarkup().add(InlineKeyboardButton("🔙 لوحة المشرفين", callback_data="admin_panel"))
-        await message.answer(f"✅ تمت إضافة `{amount}$` للمستخدم `{target_id}` بنجاح.", reply_markup=kb)
-        await state.finish()
-    except:
-        await message.answer("⚠️ قيمة غير صالحة، أرسل رقماً صحيحاً للمبلغ:")
-
-@dp.callback_query_handler(text="adm_sub_balance")
-async def adm_sub_1(call: types.CallbackQuery):
-    if call.from_user.id not in ADMIN_IDS: return
-    kb = InlineKeyboardMarkup().add(InlineKeyboardButton("❌ إلغاء", callback_data="admin_panel"))
-    await call.message.edit_text("أرسل أيدي المستخدم المراد خصم رصيد منه:", reply_markup=kb)
-    await AdminStates.waiting_for_sub_amount.set()
-
-@dp.message_handler(state=AdminStates.waiting_for_sub_amount)
-async def adm_sub_2(message: types.Message, state: FSMContext):
-    try:
-        target_id = str(message.text.strip())
-        db = load_db()
-        if target_id in db["users"]:
-            current_bal = db["users"][target_id].get("balance", 0.0)
-            db["users"][target_id]["balance"] = max(0.0, current_bal - 1.0)
-            save_db(db)
-            await message.answer(f"✅ تم خصم الرصيد بنجاح للمستخدم `{target_id}`.")
-        else:
-            await message.answer("⚠️ المستخدم غير موجود.")
-        await state.finish()
-    except Exception as e:
-        await message.answer(f"⚠️ حدث خطأ: {e}")
-
-@dp.callback_query_handler(text=["adm_del_country", "adm_add_country_custom", "adm_toggle_sections", "adm_stats", "adm_ban_user", "adm_unban_user", "adm_unban_id", "adm_users_count", "adm_broadcast", "adm_clean_bot", "adm_del_agent", "adm_add_agent"])
+@dp.callback_query_handler(text=["adm_stats", "adm_users_count", "adm_broadcast"])
 async def admin_dummy_actions(call: types.CallbackQuery):
     if call.from_user.id not in ADMIN_IDS: return
     action_name = call.data
     kb = InlineKeyboardMarkup().add(InlineKeyboardButton("🔙 رجوع لوحة التحكم", callback_data="admin_panel"))
-    
     if action_name == "adm_users_count":
         db = load_db()
-        users_count = len(db.get("users", {}))
-        await call.message.edit_text(f"👥 **إجمالي المشتركين في البوت:** `{users_count}` مشترك.", reply_markup=kb, parse_mode="Markdown")
+        await call.message.edit_text(f"👥 إجمالي المشتركين: `{len(db.get('users', {}))}` مشترك.", reply_markup=kb, parse_mode="Markdown")
     elif action_name == "adm_stats":
         db = load_db()
-        active_orders = len(db.get("active_orders", {}))
-        await call.message.edit_text(f"📊 **إحصائيات البوت:**\n\n- الطلبات النشطة حالياً: `{active_orders}`", reply_markup=kb, parse_mode="Markdown")
+        await call.message.edit_text(f"📊 الطلبات النشطة: `{len(db.get('active_orders', {}))}`", reply_markup=kb, parse_mode="Markdown")
     else:
-        await call.message.edit_text(f"⚙️ هذا القسم (`{action_name}`) متاح ومفعل عبر لوحة المشرفين.", reply_markup=kb, parse_mode="Markdown")
+        await call.message.edit_text("⚙️ هذا القسم مفعل وجاهز.", reply_markup=kb, parse_mode="Markdown")
 
 if __name__ == '__main__':
     executor.start_polling(dp, skip_updates=True)
