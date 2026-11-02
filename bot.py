@@ -22,7 +22,7 @@ dp = Dispatcher(bot, storage=storage)
 # قاعدة البيانات والإعدادات في مكان واحد لعدم حدوث أي تضارب
 database = {
     "settings": {
-        "smsbower_api_key": "YOUR_SMSBOWER_API_KEY",
+        "smsbower_api_key": "Usl5WByEKrl7SixKM9AbYCTSFMXXt8FL",
         "smtp_server": "smtp.gmail.com",
         "smtp_port": 587,
         "sender_email": "your_email@gmail.com",
