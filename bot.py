@@ -35,7 +35,7 @@ threading.Thread(target=run_server, daemon=True).start()
 # ----------------------------------------------------
 API_TOKEN = "5418318795:AAE_s0NJw9IE1JWg6x9JuWQpl0MHDjcFCf8"
 ADMIN_IDS = [5396793642]
-REQUIRED_CHANNEL = "@SIM_NUMBERS" # قناة الاشتراك الإجباري
+REQUIRED_CHANNEL = "@SIM_NUMBERS"
 
 logging.basicConfig(level=logging.INFO)
 
@@ -113,7 +113,7 @@ def generate_captcha_image(number_str):
     return bio
 
 # ----------------------------------------------------
-# 3. الأوامر والتحقق الإجباري (قناة + كابتشا + إيميل)
+# 3. الأوامر والتحقق الإجباري
 # ----------------------------------------------------
 @dp.message_handler(commands=['start'])
 async def send_welcome(message: types.Message, state: FSMContext):
@@ -438,7 +438,6 @@ async def buy_sim_menu(call: types.CallbackQuery):
             await call.message.answer("⚠️ **عذراً، قسم الأرقام الوهمية غير متاح حالياً.**", reply_markup=keyboard, parse_mode="Markdown")
         return
 
-    # جلب الدول والأسعار للواتساب والتيليجرام مباشرة من موقع SMSBower
     try:
         prices_url = f"https://smsbower.app/stubs/handler_api.php?api_key={api_key}&action=getPrices"
         response = requests.get(prices_url, timeout=10)
@@ -448,7 +447,7 @@ async def buy_sim_menu(call: types.CallbackQuery):
             target_services = ["wa", "tg"]
             count = 0
             for country_id, services in data.items():
-                if count >= 10: break # عرض أول 10 دول متوفرة
+                if count >= 10: break
                 for serv_code in target_services:
                     if serv_code in services:
                         serv_info = services[serv_code]
@@ -457,7 +456,6 @@ async def buy_sim_menu(call: types.CallbackQuery):
                         if stock > 0:
                             serv_name = "واتساب 🟢" if serv_code == "wa" else "تيليجرام 🔵"
                             btn_text = f"{serv_name} (دولة {country_id}) – ${price:.2f} · المتاح: {stock}"
-                            # callback يحمل معلومات الشراء مباشرة: buy_api_{country_id}_{serv_code}_{price}
                             keyboard.add(InlineKeyboardButton(btn_text, callback_data=f"buy_api_{country_id}_{serv_code}_{price}"))
                             count += 1
     except Exception as e:
@@ -513,4 +511,427 @@ async def process_api_buy_request(call: types.CallbackQuery, state: FSMContext):
 
 @dp.callback_query_handler(text="confirm_sms_yes")
 async def execute_sms_order(call: types.CallbackQuery, state: FSMContext):
+    user_id = str(call.from_user.id)
+    order_info = admin_temp_data.get(user_id)
     
+    if not order_info:
+        await call.answer("⚠️ انتهت صلاحية الطلب، حاول مرة أخرى.", show_alert=True)
+        await send_welcome(call.message, state)
+        return
+        
+    price = order_info["price"]
+    country_id = order_info["country_id"]
+    service_code = order_info["service_code"]
+    item_name = order_info["item"]
+    
+    db = load_db()
+    api_key = db.get("settings", {}).get("smsbower_api_key")
+    
+    if not api_key:
+        await call.answer("❌ مفتاح API غير متوفر!", show_alert=True)
+        return
+        
+    if db["users"].get(user_id, {}).get("balance", 0.0) < price:
+        await call.answer("❌ رصيدك غير كافٍ!", show_alert=True)
+        return
+        
+    buy_url = f"https://smsbower.app/stubs/handler_api.php?api_key={api_key}&action=getNumber&service={service_code}&country={country_id}"
+    
+    try:
+        response = requests.get(buy_url, timeout=15)
+        res_text = response.text.strip()
+        
+        if "ACCESS_NUMBER" in res_text:
+            res_parts = res_text.split(":")
+            activation_id = res_parts[1]
+            phone_number = res_parts[2]
+            
+            db["users"][user_id]["balance"] -= price
+            save_db(db)
+            
+            if "active_orders" not in db: db["active_orders"] = {}
+            db["active_orders"][user_id] = {
+                "activation_id": activation_id,
+                "phone": phone_number,
+                "item": item_name,
+                "price": price
+            }
+            save_db(db)
+            
+            success_kb = InlineKeyboardMarkup(row_width=1)
+            success_kb.add(
+                InlineKeyboardButton("🔄 جلب كود التحقق (SMS)", callback_data="check_sms_code"),
+                InlineKeyboardButton("🔙 القائمة الرئيسية", callback_data="back_to_main")
+            )
+            
+            success_text = (
+                f"✅ **تم شراء الرقم بنجاح!**\n\n"
+                f"📱 الخدمة: `{item_name}`\n"
+                f"📞 الرقم المخصص: `{phone_number}`\n"
+                f"🆔 أيدي التفعيل: `{activation_id}`\n"
+                f"💰 المبلغ المخصوم: `{price}$`\n"
+                f"💳 رصيدك المتبقي: `{db['users'][user_id]['balance']}$`\n\n"
+                f"اضغط على زر **(جلب كود التحقق)** بالأسفل عندما تصلك الرسالة 👇"
+            )
+            
+            await call.message.edit_text(success_text, reply_markup=success_kb, parse_mode="Markdown")
+        else:
+            await call.answer(f"❌ عذراً، فشل الشراء من الموقع: {res_text}", show_alert=True)
+            
+    except Exception as e:
+        await call.answer(f"❌ حدث خطأ في الاتصال بالموقع: {str(e)}", show_alert=True)
+        
+    if user_id in admin_temp_data:
+        del admin_temp_data[user_id]
+        
+    await state.finish()
+
+# ----------------------------------------------------
+# 7. جلب كود التحقق وتنبيه العميل بالشكل المطلوب
+# ----------------------------------------------------
+@dp.callback_query_handler(text="check_sms_code")
+async def check_sms_code_handler(call: types.CallbackQuery):
+    user_id = str(call.from_user.id)
+    db = load_db()
+    
+    order_data = db.get("active_orders", {}).get(user_id)
+    if not order_data:
+        await call.answer("⚠️ لا يوجد لديك طلب نشط حالياً!", show_alert=True)
+        return
+        
+    activation_id = order_data["activation_id"]
+    phone_number = order_data["phone"]
+    item_name = order_data.get("item", "واتساب")
+    price = order_data.get("price", 0.0)
+    
+    api_key = db.get("settings", {}).get("smsbower_api_key")
+    if not api_key:
+        await call.answer("❌ مفتاح API غير متوفر!", show_alert=True)
+        return
+        
+    status_url = f"https://smsbower.app/stubs/handler_api.php?api_key={api_key}&action=getStatus&id={activation_id}"
+    
+    try:
+        response = requests.get(status_url, timeout=10)
+        res_text = response.text.strip()
+        
+        if "STATUS_WAIT_CODE" in res_text:
+            await call.answer("⏳ لم تصل رسالة التحقق بعد، انتظر قليلاً ثم حاول مجدداً.", show_alert=True)
+            
+        elif "STATUS_OK" in res_text or ":" in res_text:
+            sms_code = res_text.split(":")[-1]
+            
+            await call.answer("🔔 تنبيه! الكود وصل بنجاح!", show_alert=True)
+            
+            kb = InlineKeyboardMarkup(row_width=1)
+            kb.add(
+                InlineKeyboardButton("🔄 طلب كود آخر", callback_data="buy_sim"),
+                InlineKeyboardButton("🔙 القائمة الرئيسية", callback_data="back_to_main")
+            )
+            
+            formatted_text = (
+                f"🔔 **تنبيه!** 📨\n"
+                f"الكود للرقم: `{phone_number}`\n"
+                f"أصبح جاهزاً الآن.\n\n"
+                f"> 🎁 **تهانينا! وصل كودك.**\n"
+                f"> ☎️ **الرقم:** `{phone_number}`\n"
+                f"> 📨 **الكود:** `{sms_code}`\n"
+                f"> 💰 **السعر:** `{price} USD`\n"
+                f"> ↪️ **التطبيق:** `{item_name}`\n\n"
+                f"> 🔄 **تم تحديث الكود.**"
+            )
+            
+            try:
+                await call.message.edit_text(formatted_text, reply_markup=kb, parse_mode="Markdown")
+            except:
+                await call.message.answer(formatted_text, reply_markup=kb, parse_mode="Markdown")
+                
+            if user_id in db["active_orders"]:
+                del db["active_orders"][user_id]
+                save_db(db)
+                
+        else:
+            await call.answer(f"ℹ️ حالة الطلب حالياً: {res_text}", show_alert=True)
+            
+    except Exception as e:
+        await call.answer(f"❌ حدث خطأ أثناء الاتصال بالموقع: {str(e)}", show_alert=True)
+
+# الألعاب والأقسام الفرعية الأخرى
+@dp.callback_query_handler(text="buy_games")
+async def buy_games_menu(call: types.CallbackQuery):
+    keyboard = InlineKeyboardMarkup(row_width=2).add(
+        InlineKeyboardButton("PUBG Mobile 🎮", callback_data="game_pubg"),
+        InlineKeyboardButton("Free Fire 🔥", callback_data="game_ff"),
+        InlineKeyboardButton("🔙 رجوع", callback_data="back_to_main")
+    )
+    await call.message.edit_text("🎮 **قسم الألعاب**\n\nاختر اللعبة:", reply_markup=keyboard, parse_mode="Markdown")
+
+@dp.callback_query_handler(text="game_pubg")
+async def pubg_packages(call: types.CallbackQuery):
+    db = load_db()
+    prices = db.get("prices", DEFAULT_PRICES)
+    keyboard = InlineKeyboardMarkup(row_width=1).add(
+        InlineKeyboardButton(f"60 شدة - {prices.get('pubg_60', 1.0)}$", callback_data="buy_item_pubg_60"),
+        InlineKeyboardButton(f"325 شدة - {prices.get('pubg_325', 5.0)}$", callback_data="buy_item_pubg_325"),
+        InlineKeyboardButton("🔙 رجوع", callback_data="buy_games")
+    )
+    await call.message.edit_text("🎮 **باقات PUBG:**", reply_markup=keyboard, parse_mode="Markdown")
+
+@dp.callback_query_handler(text="game_ff")
+async def ff_packages(call: types.CallbackQuery):
+    db = load_db()
+    prices = db.get("prices", DEFAULT_PRICES)
+    keyboard = InlineKeyboardMarkup(row_width=1).add(
+        InlineKeyboardButton(f"100 جوهرة - {prices.get('ff_100', 1.0)}$", callback_data="buy_item_ff_100"),
+        InlineKeyboardButton(f"310 جوهرة - {prices.get('ff_310', 3.0)}$", callback_data="buy_item_ff_310"),
+        InlineKeyboardButton("🔙 رجوع", callback_data="buy_games")
+    )
+    await call.message.edit_text("🔥 **باقات Free Fire:**", reply_markup=keyboard, parse_mode="Markdown")
+
+@dp.callback_query_handler(text=["top_services", "buy_smm", "digital_store", "my_orders", "search_service", "order_status"])
+async def dummy_sections(call: types.CallbackQuery):
+    kb = InlineKeyboardMarkup().add(InlineKeyboardButton("🔙 رجوع", callback_data="back_to_main"))
+    await call.message.edit_text("⚙️ هذا القسم قيد التطوير.", reply_markup=kb)
+
+@dp.callback_query_handler(text="recharge_balance")
+async def recharge_balance_start(call: types.CallbackQuery):
+    keyboard = InlineKeyboardMarkup().add(InlineKeyboardButton("❌ إلغاء", callback_data="cancel_process"))
+    await call.message.edit_text("💳 أرسل **كود الكارت** لشحن الرصيد:", reply_markup=keyboard, parse_mode="Markdown")
+    await UserStates.waiting_for_coupon_code.set()
+
+@dp.message_handler(state=UserStates.waiting_for_coupon_code)
+async def process_coupon_code(message: types.Message, state: FSMContext):
+    code = message.text.strip()
+    db = load_db()
+    user_id = str(message.from_user.id)
+    
+    if "coupons" in db and code in db["coupons"]:
+        amount = db["coupons"][code]
+        db["users"][user_id]["balance"] += float(amount)
+        del db["coupons"][code]
+        save_db(db)
+        await message.answer(f"✅ تم شحن رصيدك بـ `{amount}$` بنجاح!", reply_markup=get_main_menu(int(user_id)), parse_mode="Markdown")
+        await state.finish()
+    else:
+        await message.answer("⚠️ الكود غير صالح:")
+
+# ----------------------------------------------------
+# 8. لوحة المشرفين وقسم SMSBower المستقل
+# ----------------------------------------------------
+@dp.callback_query_handler(text="admin_panel")
+async def open_admin_panel(call: types.CallbackQuery):
+    if call.from_user.id not in ADMIN_IDS: return
+    keyboard = InlineKeyboardMarkup(row_width=1).add(
+        InlineKeyboardButton("🌐 قسم ربط موقع SMSBower (API)", callback_data="sms_section_menu"),
+        InlineKeyboardButton("➕ إضافة رصيد لمستخدم", callback_data="adm_add_balance"),
+        InlineKeyboardButton("🎟️ إنشاء كارت شحن", callback_data="adm_create_coupon"),
+        InlineKeyboardButton("🌍 إضافة دولة ومخزون", callback_data="adm_add_country"),
+        InlineKeyboardButton("🔙 القائمة الرئيسية", callback_data="back_to_main")
+    )
+    try:
+        await call.message.edit_text("⚙️ **لوحة التحكم الإدارية:**\n\nاختر القسم المطلوب:", reply_markup=keyboard, parse_mode="Markdown")
+    except:
+        await call.message.answer("⚙️ **لوحة التحكم الإدارية:**\n\nاختر القسم المطلوب:", reply_markup=keyboard, parse_mode="Markdown")
+
+@dp.callback_query_handler(text="sms_section_menu")
+async def sms_section_menu(call: types.CallbackQuery):
+    if call.from_user.id not in ADMIN_IDS: return
+    
+    db = load_db()
+    api_key = db.get("settings", {}).get("smsbower_api_key")
+    status_display = f"`{api_key}`" if api_key else "❌ غير مُعين حالياً"
+    
+    keyboard = InlineKeyboardMarkup(row_width=2)
+    keyboard.add(
+        InlineKeyboardButton("➕ إضافة / تعديل المفتاح", callback_data="set_sms_api"),
+        InlineKeyboardButton("🗑️ حذف المفتاح", callback_data="delete_sms_api")
+    )
+    keyboard.add(InlineKeyboardButton("💰 فحص رصيد الموقع عبر API", callback_data="check_sms_balance"))
+    keyboard.add(InlineKeyboardButton("🌐 جلب الدول والخدمات والأسعار", callback_data="fetch_sms_services"))
+    keyboard.add(InlineKeyboardButton("🔙 رجوع لوحة المشرفين", callback_data="admin_panel"))
+    
+    await call.message.edit_text(
+        f"🌐 **قسم إدارة وتوصيل موقع SMSBower API**\n\n"
+        f"🔑 مفتاح الـ API المسجل: {status_display}\n\n"
+        f"يمكنك التحكم بإعدادات الربط واستعراض بيانات الموقع عبر الأزرار أدناه:",
+        reply_markup=keyboard, parse_mode="Markdown"
+    )
+
+@dp.callback_query_handler(text="set_sms_api")
+async def set_sms_api_start(call: types.CallbackQuery):
+    if call.from_user.id not in ADMIN_IDS: return
+    kb = InlineKeyboardMarkup().add(InlineKeyboardButton("❌ إلغاء", callback_data="sms_section_menu"))
+    await call.message.edit_text(
+        "🔑 **إضافة / تعديل مفتاح SMSBower API**\n\nالرجاء إرسال مفتاح الـ API الجديد في رسالة الآن:",
+        reply_markup=kb, parse_mode="Markdown"
+    )
+    await AdminStates.waiting_for_sms_api_key.set()
+
+@dp.message_handler(state=AdminStates.waiting_for_sms_api_key)
+async def save_sms_api_key(message: types.Message, state: FSMContext):
+    if message.from_user.id not in ADMIN_IDS: return
+    new_api_key = message.text.strip()
+    
+    db = load_db()
+    if "settings" not in db:
+        db["settings"] = {}
+    db["settings"]["smsbower_api_key"] = new_api_key
+    save_db(db)
+    
+    kb = InlineKeyboardMarkup().add(InlineKeyboardButton("🔙 رجوع لقسم SMSBower", callback_data="sms_section_menu"))
+    await message.answer(
+        f"✅ **تم حفظ مفتاح SMSBower API بنجاح!**\n\n🔑 المفتاح: `{new_api_key}`",
+        reply_markup=kb, parse_mode="Markdown"
+    )
+    await state.finish()
+
+@dp.callback_query_handler(text="delete_sms_api")
+async def delete_sms_api_key(call: types.CallbackQuery):
+    if call.from_user.id not in ADMIN_IDS: return
+    
+    db = load_db()
+    if "settings" in db and "smsbower_api_key" in db["settings"]:
+        db["settings"]["smsbower_api_key"] = None
+        save_db(db)
+        
+    await call.answer("🗑️ تم حذف مفتاح الـ API بنجاح!", show_alert=True)
+    await sms_section_menu(call)
+
+@dp.callback_query_handler(text="check_sms_balance")
+async def check_smsbower_balance(call: types.CallbackQuery):
+    if call.from_user.id not in ADMIN_IDS: return
+    
+    db = load_db()
+    api_key = db.get("settings", {}).get("smsbower_api_key")
+    
+    if not api_key:
+        await call.answer("⚠️ لم يتم تعيين مفتاح API بعد!", show_alert=True)
+        return
+        
+    api_url = f"https://smsbower.app/stubs/handler_api.php?api_key={api_key}&action=getBalance"
+    
+    try:
+        response = requests.get(api_url, timeout=10)
+        result_text = response.text.strip()
+        
+        if "ACCESS_BALANCE" in result_text or result_text.replace('.', '', 1).isdigit():
+            balance_val = result_text.split(":")[-1] if ":" in result_text else result_text
+            kb = InlineKeyboardMarkup().add(InlineKeyboardButton("🔙 رجوع لقسم SMSBower", callback_data="sms_section_menu"))
+            await call.message.edit_text(
+                f"📊 **حالة رصيد موقع SMSBower:**\n\n"
+                f"💰 الرصيد الحالي: `{balance_val}` دولار / روبل\n"
+                f"🌐 الحالة: متصل بنجاح ✅",
+                reply_markup=kb, parse_mode="Markdown"
+            )
+        else:
+            await call.answer(f"⚠️ رد غير متوقع من الموقع: {result_text}", show_alert=True)
+    except Exception as e:
+        await call.answer(f"❌ حدث خطأ أثناء الاتصال بالموقع: {str(e)}", show_alert=True)
+
+@dp.callback_query_handler(text="fetch_sms_services")
+async def fetch_telegram_whatsapp_services(call: types.CallbackQuery):
+    if call.from_user.id not in ADMIN_IDS: return
+    
+    db = load_db()
+    api_key = db.get("settings", {}).get("smsbower_api_key")
+    
+    if not api_key:
+        await call.answer("⚠️ يجب تعيين مفتاح الـ API أولاً!", show_alert=True)
+        return
+        
+    await call.message.edit_text("⏳ **جاري جلب أسعار وتوفر (تيليجرام وواتساب) من موقع SMSBower...**", parse_mode="Markdown")
+    
+    prices_url = f"https://smsbower.app/stubs/handler_api.php?api_key={api_key}&action=getPrices"
+    
+    try:
+        response = requests.get(prices_url, timeout=15)
+        data = response.json() if response.headers.get('content-type', '').startswith('application/json') else None
+        
+        kb = InlineKeyboardMarkup().add(InlineKeyboardButton("🔙 رجوع لقسم SMSBower", callback_data="sms_section_menu"))
+        
+        if data:
+            text_result = "📱 **أسعار ومخزون (واتساب وتيليجرام) المتاحة حالياً:**\n\n"
+            target_services = ["wa", "tg"] 
+            
+            count = 0
+            for country_id, services in data.items():
+                country_has_target = any(serv in services for serv in target_services)
+                if country_has_target and count < 15:
+                    text_result += f"🌍 **رقم الدولة (ID):** `{country_id}`\n"
+                    
+                    for serv_code in target_services:
+                        if serv_code in services:
+                            serv_info = services[serv_code]
+                            price = serv_info.get('cost', 'غير متوفر')
+                            stock = serv_info.get('count', 0)
+                            serv_name = "واتساب 🟢" if serv_code == "wa" else "تيليجرام 🔵"
+                            text_result += f"   🔹 {serv_name} | السعر: `{price}$` | المتاح: `{stock}`\n"
+                            
+                    text_result += "-----------------------------------\n"
+                    count += 1
+                    
+            await call.message.edit_text(text_result, reply_markup=kb, parse_mode="Markdown")
+        else:
+            raw_text = response.text[:3500]
+            await call.message.edit_text(
+                f"📋 **البيانات المستلمة:**\n\n`{raw_text}`",
+                reply_markup=kb, parse_mode="Markdown"
+            )
+            
+    except Exception as e:
+        kb = InlineKeyboardMarkup().add(InlineKeyboardButton("🔙 رجوع", callback_data="sms_section_menu"))
+        await call.message.edit_text(f"❌ حدث خطأ أثناء الاتصال: `{str(e)}`", reply_markup=kb, parse_mode="Markdown")
+
+@dp.callback_query_handler(text="adm_add_balance")
+async def adm_add_1(call: types.CallbackQuery):
+    if call.from_user.id not in ADMIN_IDS: return
+    await call.message.edit_text("أرسل أيدي المستخدم:", reply_markup=None)
+    await AdminStates.waiting_for_add_id.set()
+
+@dp.message_handler(state=AdminStates.waiting_for_add_id)
+async def adm_add_2(message: types.Message, state: FSMContext):
+    admin_temp_data['target_id'] = int(message.text.strip())
+    await message.answer("أرسل المبلغ:")
+    await AdminStates.waiting_for_add_amount.set()
+
+@dp.message_handler(state=AdminStates.waiting_for_add_amount)
+async def adm_add_3(message: types.Message, state: FSMContext):
+    amount = float(message.text.strip())
+    target_id = str(admin_temp_data.get('target_id'))
+    db = load_db()
+    if target_id not in db["users"]: db["users"][target_id] = {"balance": 0.0, "name": "User"}
+    db["users"][target_id]["balance"] += amount
+    save_db(db)
+    await message.answer(f"✅ تمت الإضافة بنجاح.")
+    await state.finish()
+
+@dp.callback_query_handler(text="adm_create_coupon")
+async def adm_coupon_1(call: types.CallbackQuery):
+    if call.from_user.id not in ADMIN_IDS: return
+    await call.message.edit_text("أرسل كود الكارت:", reply_markup=None)
+    await AdminStates.waiting_for_coupon_code.set()
+
+@dp.message_handler(state=AdminStates.waiting_for_coupon_code)
+async def adm_coupon_2(message: types.Message, state: FSMContext):
+    admin_temp_data['coupon_code'] = message.text.strip()
+    await message.answer("أرسل القيمة بالدولار:")
+    await AdminStates.waiting_for_coupon_amount.set()
+
+@dp.message_handler(state=AdminStates.waiting_for_coupon_amount)
+async def adm_coupon_3(message: types.Message, state: FSMContext):
+    amount = float(message.text.strip())
+    code = admin_temp_data.get('coupon_code')
+    db = load_db()
+    db["coupons"][code] = amount
+    save_db(db)
+    await message.answer(f"✅ تم إنشاء الكود `{code}` بنجاح.")
+    await state.finish()
+
+@dp.callback_query_handler(text="adm_add_country")
+async def adm_add_country_handler(call: types.CallbackQuery):
+    if call.from_user.id not in ADMIN_IDS: return
+    kb = InlineKeyboardMarkup().add(InlineKeyboardButton("🔙 رجوع", callback_data="admin_panel"))
+    await call.message.edit_text("🌍 **إضافة دولة ومخزون:**\n\nيتم جلب وعرض بيانات الدول والأسعار والمخزون حالياً بشكل تلقائي من موقع SMSBower عبر قسم (قسم ربط موقع SMSBower).", reply_markup=kb, parse_mode="Markdown")
+
+if __name__ == '__main__':
+    executor.start_polling(dp, skip_updates=True)
