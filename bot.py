@@ -175,9 +175,6 @@ def handle_callbacks(call):
 
     elif data.startswith("service_"):
         service_code = data.split("_")[1]
-        service_name = "واتساب" if service_code == "wa" else "تليجرام"
-        
-        # الانتقال لعرض الصفحة الأولى (الصفحة رقم 0) من الدول الـ 12
         show_countries_page(chat_id, call.message.message_id, service_code, page=0)
 
     elif data.startswith("cpage_"):
@@ -205,7 +202,6 @@ def handle_callbacks(call):
             response = requests.get(API_URL, params=params, timeout=10)
             data_json = response.json()
             
-            # البحث عن السيرفرات الخاصة بالدولة بالاسم الإنجليزي أو المعرف
             servers = data_json.get(country_eng_name, {})
             if not servers and isinstance(data_json, dict):
                 for dk, dv in data_json.items():
@@ -223,7 +219,6 @@ def handle_callbacks(call):
                         button_text = f"🌐 سيرفر #{provider_id} | المخزون: {count} | السعر: {price} $"
                         markup.add(types.InlineKeyboardButton(button_text, callback_data=f"buy_{service_code}_{country_id}_{provider_id}"))
             else:
-                # خيار الشراء المباشر في حال لم تتوفر تفاصيل السيرفرات مفصلة للمزودين
                 markup.add(types.InlineKeyboardButton("🚀 شراء مباشر (سيرفر افتراضي)", callback_data=f"buy_{service_code}_{country_id}_0"))
 
             btn_back = types.InlineKeyboardButton("🔙 رجوع للقائمة", callback_data=f"service_{service_code}")
@@ -310,7 +305,6 @@ def handle_callbacks(call):
                 f"⚠️ لا يمكن إلغاء الرقم حالياً (قد يكون مر وقت طويل أو وصل الكود بالفعل).\nالاستجابة: {status_text}"
             )
 
-# دالة لعرض الدول بصفحات (كل صفحة تحتوي على 6 دول مع أزرار التالي والسابق)
 def show_countries_page(chat_id, message_id, service_code, page=0):
     items_per_page = 6
     total_countries = len(POPULAR_COUNTRIES)
@@ -321,7 +315,42 @@ def show_countries_page(chat_id, message_id, service_code, page=0):
     
     markup = types.InlineKeyboardMarkup(row_width=2)
     
-    # إضافة أزرار الدول بنظام صفين
     row_buttons = []
     for c in page_countries:
-        row_buttons.append(types.InlineKeyboardButton(c["name"], callback_data=
+        row_buttons.append(types.InlineKeyboardButton(c["name"], callback_data=f"select_country_{service_code}_{c['id']}_{c['eng']}"))
+    
+    for i in range(0, len(row_buttons), 2):
+        if i + 1 < len(row_buttons):
+            markup.add(row_buttons[i], row_buttons[i+1])
+        else:
+            markup.add(row_buttons[i])
+
+    nav_buttons = []
+    if page > 0:
+        nav_buttons.append(types.InlineKeyboardButton("⬅️ السابق", callback_data=f"cpage_{service_code}_{page-1}"))
+    if end_idx < total_countries:
+        nav_buttons.append(types.InlineKeyboardButton("التالي ➡️", callback_data=f"cpage_{service_code}_{page+1}"))
+    
+    if nav_buttons:
+        markup.row(*nav_buttons)
+
+    btn_back = types.InlineKeyboardButton("🔙 رجوع للقائمة الرئيسية", callback_data="back_to_services")
+    markup.add(btn_back)
+
+    service_name = "واتساب" if service_code == "wa" else "تليجرام"
+    
+    try:
+        bot.edit_message_text(
+            chat_id=chat_id,
+            message_id=message_id,
+            text=f"🌍 **اختر الدولة لخدمة ({service_name})** - الصفحة {page+1}:",
+            parse_mode="Markdown",
+            reply_markup=markup
+        )
+    except Exception:
+        pass
+
+if __name__ == "__main__":
+    keep_alive()
+    print("🤖 البوت يعمل الآن بسلاسة تامة...")
+    bot.infinity_polling()
