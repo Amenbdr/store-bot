@@ -29,7 +29,7 @@ bot = TeleBot(TELEGRAM_BOT_TOKEN)
 USER_API_KEYS = {}
 USER_STATES = {}
 
-# دالة الفحص التلقائي لوصول كود الـ SMS في الخلفية
+# دالة الفحص التلقائي لوصول كود الـ SMS في الخلفية مطابقة لتوثيق getStatus
 def auto_check_sms(chat_id, api_key, activation_id, phone):
     max_attempts = 60  
     attempt = 0
@@ -182,21 +182,32 @@ def handle_callbacks(call):
         user_key = USER_API_KEYS[chat_id]
         
         try:
-            # جلب القائمة المطابقة لهيكل الوثائق (JSON object containing id, eng, rus, etc.)
             countries_res = requests.get(API_URL, params={'api_key': user_key, 'action': 'getCountries'}, timeout=10)
-            countries_json = countries_res.json()
+            countries_data = countries_res.json()
             
             markup = types.InlineKeyboardMarkup(row_width=2)
             
-            if isinstance(countries_json, dict) and len(countries_json) > 0:
-                for k, v in countries_json.items():
-                    c_id = k
-                    c_name = k
-                    if isinstance(v, dict):
-                        c_id = str(v.get("id", k))
-                        c_name = v.get("eng", k)
+            # معالجة استجابة الدول سواء كانت Dictionary أو List لضمان جلب الـ id الصحيح
+            items_iter = []
+            if isinstance(countries_data, dict):
+                items_iter = countries_data.items()
+            elif isinstance(countries_data, list):
+                items_iter = [(str(idx), item) for idx, item in enumerate(countries_data)]
+
+            if len(items_iter) > 0:
+                for k, v in items_iter:
+                    c_id = str(k)
+                    c_name = str(k)
                     
-                    markup.add(types.InlineKeyboardButton(f"🌍 {str(c_name).capitalize()}", callback_data=f"buy_{service_code}_{c_id}_0"))
+                    if isinstance(v, dict):
+                        # استخراج الـ id الحقيقي والاسم الإنجليزي وفقاً لوثائق الموقع
+                        c_id = str(v.get("id", k))
+                        c_name = str(v.get("eng", v.get("rus", k)))
+                    elif isinstance(v, (str, int)):
+                        c_id = str(v)
+                        c_name = str(k)
+
+                    markup.add(types.InlineKeyboardButton(f"🌍 {c_name.capitalize()}", callback_data=f"buy_{service_code}_{c_id}_0"))
             else:
                 bot.answer_callback_query(call.id, "لا توجد دول متاحة حالياً.", show_alert=True)
                 return
@@ -223,68 +234,10 @@ def handle_callbacks(call):
         
         user_key = USER_API_KEYS[chat_id]
         
+        # تمرير المعرّف الرقمي الصحيح للدولة بعيداً عن أي أخطاء نصية
         buy_params = {
             'api_key': user_key,
             'action': 'getNumber',
             'service': service,
             'country': country_numeric_id,
-            'providerIds': provider_id
-        }
-        res = requests.get(API_URL, params=buy_params)
-        
-        if "ACCESS_NUMBER" in res.text:
-            res_parts = res.text.split(":")
-            activation_id = res_parts[1]
-            phone = res_parts[2] if len(res_parts) > 2 else "متاح"
-            
-            markup = types.InlineKeyboardMarkup(row_width=1)
-            btn_cancel = types.InlineKeyboardButton("❌ إلغاء الرقم واسترداد الرصيد", callback_data=f"cancel_{activation_id}")
-            markup.add(btn_cancel)
-
-            bot.send_message(
-                chat_id,
-                f"✅ **تم شراء الرقم بنجاح!**\n\n"
-                f"📱 **الرقم:** `{phone}`\n"
-                f"🆔 **معرف التفعيل:** `{activation_id}`\n\n"
-                f"🔄 **جاري مراقبة وصول كود الـ SMS تلقائياً...** سيتم إرساله هنا فور وصوله.",
-                parse_mode="Markdown",
-                reply_markup=markup
-            )
-
-            t = threading.Thread(target=auto_check_sms, args=(chat_id, user_key, activation_id, phone))
-            t.daemon = True
-            t.start()
-
-        else:
-            bot.send_message(chat_id, f"❌ تعذر شراء الرقم. السبب: {res.text}")
-
-    elif data.startswith("cancel_"):
-        activation_id = data.split("_")[1]
-        bot.answer_callback_query(call.id, "جاري إلغاء الرقم...")
-
-        params = {
-            'api_key': USER_API_KEYS[chat_id],
-            'action': 'setStatus',
-            'status': 8,
-            'id': activation_id
-        }
-        res = requests.get(API_URL, params=params)
-        status_text = res.text.strip()
-
-        if "ACCESS_CANCEL" in status_text or "ACCESS_OK" in status_text:
-            bot.edit_message_text(
-                chat_id=chat_id,
-                message_id=call.message.message_id,
-                text=f"🚫 **تم إلغاء الرقم بنجاح وإعادة رصيدك للحساب!**\n🆔 المعرف: `{activation_id}`",
-                parse_mode="Markdown"
-            )
-        else:
-            bot.send_message(
-                chat_id,
-                f"⚠️ لا يمكن إلغاء الرقم حالياً (قد يكون مر وقت طويل أو وصل الكود بالفعل).\nالاستجابة: {status_text}"
-            )
-
-if __name__ == "__main__":
-    keep_alive()
-    print("🤖 البوت يعمل الآن بسلاسة تامة...")
-    bot.infinity_polling()
+            'providerIds': provider_
