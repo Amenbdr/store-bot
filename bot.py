@@ -31,11 +31,11 @@ USER_STATES = {}
 
 COUNTRIES = {
     "sa": {"name": "السعودية", "flag": "🇸🇦", "api_name": "saudi-arabia"},
-    "eg": {"name": "مصر", "flag": "🇪🇬", "code": "egypt"},
-    "ae": {"name": "الإمارات", "flag": "🇦🇪", "code": "united-arab-emirates"},
-    "usa": {"name": "أمريكا", "flag": "🇺🇸", "code": "united-states"},
-    "ru": {"name": "روسيا", "flag": "🇷🇺", "code": "russia"},
-    "uk": {"name": "بريطانيا", "flag": "🇬🇧", "code": "united-kingdom"}
+    "eg": {"name": "مصر", "flag": "🇪🇬", "api_name": "egypt"},
+    "ae": {"name": "الإمارات", "flag": "🇦🇪", "api_name": "united-arab-emirates"},
+    "usa": {"name": "أمريكا", "flag": "🇺🇸", "api_name": "united-states"},
+    "ru": {"name": "روسيا", "flag": "🇷🇺", "api_name": "russia"},
+    "uk": {"name": "بريطانيا", "flag": "🇬🇧", "api_name": "united-kingdom"}
 }
 
 # دالة الفحص التلقائي لوصول الكود في الخلفية
@@ -193,19 +193,21 @@ def handle_callbacks(call):
             response = requests.get(API_URL, params=params, timeout=10)
             data_json = response.json()
             
-            # البحث عن الدولة بالطريقة الصحيحة داخل المفاتيح المستلمة
             target_country_data = {}
+            matched_api_country = ""
+            
+            # البحث عن اسم الدولة الحقيقي الذي يرسله الموقع
             for api_country_name, servers_dict in data_json.items():
                 if country_key in api_country_name.lower() or api_country_name.lower() in country_key:
                     target_country_data = servers_dict
+                    matched_api_country = api_country_name
                     break
             
-            # إذا لم تكن موجودة كمفتاح مطابق تماماً، نجرب البحث المرن
             if not target_country_data:
                 for api_country_name, servers_dict in data_json.items():
                     if isinstance(servers_dict, dict) and len(servers_dict) > 0:
-                        # عرض أول دولة متاحة كبديل مؤقت إذا لم تتطابق الحروف بدقة
                         target_country_data = servers_dict
+                        matched_api_country = api_country_name
                         break
 
             if not target_country_data or not isinstance(target_country_data, dict):
@@ -218,7 +220,8 @@ def handle_callbacks(call):
                     price = info.get("price", "N/A")
                     count = info.get("count", "N/A")
                     button_text = f"سيرفر #{provider_id} | الكمية: {count} | السعر: {price} $"
-                    markup.add(types.InlineKeyboardButton(button_text, callback_data=f"buy_{service_code}_{country_key}_{provider_id}"))
+                    # نمرر اسم الدولة الحقيقي (matched_api_country) في الـ callback لتجنب خطأ WRONG_COUNTRY
+                    markup.add(types.InlineKeyboardButton(button_text, callback_data=f"buy_{service_code}_{matched_api_country}_{provider_id}"))
 
             if len(markup.keyboard) == 0:
                 bot.send_message(chat_id, "⚠️ لا توجد سيرفرات نشطة لهذه الدولة حالياً.")
@@ -234,7 +237,12 @@ def handle_callbacks(call):
             bot.send_message(chat_id, f"❌ حدث خطأ أثناء جلب السيرفرات.")
 
     elif data.startswith("buy_"):
-        _, service, country, provider_id = data.split("_")
+        # استخراج البيانات بدقة (بما في ذلك اسم الدولة بالإنجليزية الذي تم تمريره)
+        parts = data.split("_")
+        service = parts[1]
+        country = parts[2]
+        provider_id = parts[3]
+        
         bot.answer_callback_query(call.id, "جاري طلب الرقم...")
         
         user_key = USER_API_KEYS[chat_id]
@@ -248,9 +256,9 @@ def handle_callbacks(call):
         res = requests.get(API_URL, params=buy_params)
         
         if "ACCESS_NUMBER" in res.text:
-            parts = res.text.split(":")
-            activation_id = parts[1]
-            phone = parts[2] if len(parts) > 2 else "متاح"
+            res_parts = res.text.split(":")
+            activation_id = res_parts[1]
+            phone = res_parts[2] if len(res_parts) > 2 else "متاح"
             
             markup = types.InlineKeyboardMarkup(row_width=1)
             btn_cancel = types.InlineKeyboardButton("❌ إلغاء الرقم واسترداد الرصيد", callback_data=f"cancel_{activation_id}")
