@@ -220,7 +220,6 @@ def handle_callbacks(call):
                     price = info.get("price", "N/A")
                     count = info.get("count", "N/A")
                     button_text = f"سيرفر #{provider_id} | الكمية: {count} | السعر: {price} $"
-                    # نمرر اسم الدولة الحقيقي الذي جلبناه من الاستجابة مع معرف السيرفر
                     markup.add(types.InlineKeyboardButton(button_text, callback_data=f"buy_{service_code}_{matched_country_name}_{provider_id}"))
 
             if len(markup.keyboard) == 0:
@@ -237,26 +236,29 @@ def handle_callbacks(call):
             bot.send_message(chat_id, f"❌ حدث خطأ أثناء جلب السيرفرات.")
 
     elif data.startswith("buy_"):
-        # استخراج بيانات الشراء مع دعم الأسماء التي تحتوي على شرطات مثل united-states
         parts = data.split("_")
         service = parts[1]
-        # اسم الدولة قد يحتوي على شرطات، لذا نجمعه بالشكل الصحيح
         provider_id = parts[-1]
         country_name = "_".join(parts[2:-1])
         
-        bot.answer_callback_query(call.id, "جاري طلب الرقم...")
+        bot.answer_callback_query(call.id, "جاري طلب الرقم (الإصدار الثاني)...")
         
         user_key = USER_API_KEYS[chat_id]
         
-        # استخدام دالة الشراء مع الدولة وسيرفر المزود بدقة
+        # استخدام دالة الإصدار الثاني للشراء المتوافقة مع وثائق الموقع الجديد
         buy_params = {
             'api_key': user_key,
-            'action': 'getNumber',
+            'action': 'getNumberV2',
             'service': service,
             'country': country_name,
             'providerIds': provider_id
         }
         res = requests.get(API_URL, params=buy_params)
+        
+        # في حال لم تنجح getNumberV2 نجرب الدالة القياسية كاحتياطي بنفس الطلب
+        if "ACCESS_NUMBER" not in res.text:
+            buy_params['action'] = 'getNumber'
+            res = requests.get(API_URL, params=buy_params)
         
         if "ACCESS_NUMBER" in res.text:
             res_parts = res.text.split(":")
@@ -282,7 +284,7 @@ def handle_callbacks(call):
             t.start()
 
         else:
-            bot.send_message(chat_id, f"❌ تعذر شراء الرقم. السبب: {res.text}")
+            bot.send_message(chat_id, f"❌ تعذر شراء الرقم. الاستجابة من الموقع: {res.text}")
 
     elif data.startswith("cancel_"):
         activation_id = data.split("_")[1]
