@@ -142,7 +142,7 @@ def handle_callbacks(call):
             bot.answer_callback_query(call.id, "يجب إدخال مفتاح API أولاً!", show_alert=True)
             return
             
-        bot.answer_callback_query(call.id, "جاري فحص الرصيد...")
+        bot.answer_callback_query(call.id)
         res = requests.get(API_URL, params={'api_key': USER_API_KEYS[chat_id], 'action': 'getBalance'})
         if "ACCESS_BALANCE" in res.text or ":" in res.text:
             bal = res.text.split(":")[-1]
@@ -172,7 +172,7 @@ def handle_callbacks(call):
 
     elif data.startswith("service_"):
         service_code = data.split("_")[1]
-        bot.answer_callback_query(call.id, "جاري جلب جميع الدول المتاحة من الموقع...")
+        bot.answer_callback_query(call.id)
         load_and_show_countries(chat_id, call.message.message_id, service_code, page=0)
 
     elif data.startswith("cpage_"):
@@ -187,7 +187,7 @@ def handle_callbacks(call):
         country_id = parts[3]
         country_raw_name = "_".join(parts[4:])
         
-        bot.answer_callback_query(call.id, "جاري جلب السيرفرات والأسعار والمخزون...")
+        bot.answer_callback_query(call.id)
 
         user_key = USER_API_KEYS[chat_id]
         params = {
@@ -202,7 +202,6 @@ def handle_callbacks(call):
             
             servers = {}
             if isinstance(data_json, dict):
-                # البحث بمرونة فائقة (مطابقة جزئية أو عبر الـ ID أو اسم الدولة)
                 for dk, dv in data_json.items():
                     if (str(dk).lower() == country_raw_name.lower() or 
                         country_raw_name.lower() in str(dk).lower() or 
@@ -212,6 +211,7 @@ def handle_callbacks(call):
 
             markup = types.InlineKeyboardMarkup(row_width=1)
             
+            has_servers = False
             if isinstance(servers, dict) and len(servers) > 0:
                 for provider_id, info in servers.items():
                     if isinstance(info, dict):
@@ -219,17 +219,22 @@ def handle_callbacks(call):
                         count = info.get("count", "0")
                         button_text = f"🌐 سيرفر #{provider_id} | المخزون: {count} | السعر: {price} $"
                         markup.add(types.InlineKeyboardButton(button_text, callback_data=f"buy_{service_code}_{country_id}_{provider_id}"))
-            
-            # زر إضافي دائماً للشراء المباشر في حال لم تتوفر تفاصيل مزودين فرعية
-            markup.add(types.InlineKeyboardButton("🚀 شراء مباشر من السيرفر المتاح", callback_data=f"buy_{service_code}_{country_id}_0"))
+                        has_servers = True
 
-            btn_back = types.InlineKeyboardButton("🔙 رجوع لقائمة الدول", callback_data=f"service_{service_code}")
+            markup.add(types.InlineKeyboardButton("🚀 شراء مباشر من هذه الدولة", callback_data=f"buy_{service_code}_{country_id}_0"))
+            btn_back = types.InlineKeyboardButton("🔙 رجوع للقائمة الدول", callback_data=f"service_{service_code}")
             markup.add(btn_back)
+
+            text_msg = f"📊 **خيارات الشراء للدولة (ID: {country_id}):**\n"
+            if not has_servers:
+                text_msg += "اختر الشراء المباشر أدناه:"
+            else:
+                text_msg += "اختر السيرفر المناسب للشراء:"
 
             bot.edit_message_text(
                 chat_id=chat_id,
                 message_id=call.message.message_id,
-                text=f"📊 **سيرفرات وأسعار ومخزون الدولة (ID: {country_id}):**\nاختر السيرفر المناسب للشراء:",
+                text=text_msg,
                 parse_mode="Markdown",
                 reply_markup=markup
             )
@@ -241,7 +246,8 @@ def handle_callbacks(call):
             bot.edit_message_text(
                 chat_id=chat_id,
                 message_id=call.message.message_id,
-                text="⚠️ تعذر جلب السيرفرات التفصيلية لهذه الدولة، يمكنك المتابعة بالشراء المباشر:",
+                text="🚀 **خيارات الدولة:**\nيمكنك المتابعة بالشراء المباشر:",
+                parse_mode="Markdown",
                 reply_markup=markup
             )
 
@@ -255,146 +261,4 @@ def handle_callbacks(call):
         
         user_key = USER_API_KEYS[chat_id]
         
-        buy_params = {
-            'api_key': user_key,
-            'action': 'getNumber',
-            'service': service,
-            'country': country_numeric_id
-        }
-        if provider_id != "0":
-            buy_params['providerIds'] = provider_id
-
-        res = requests.get(API_URL, params=buy_params)
-        
-        if "ACCESS_NUMBER" in res.text:
-            res_parts = res.text.split(":")
-            activation_id = res_parts[1]
-            phone = res_parts[2] if len(res_parts) > 2 else "متاح"
-            
-            markup = types.InlineKeyboardMarkup(row_width=1)
-            btn_cancel = types.InlineKeyboardButton("❌ إلغاء الرقم واسترداد الرصيد", callback_data=f"cancel_{activation_id}")
-            markup.add(btn_cancel)
-
-            bot.send_message(
-                chat_id,
-                f"✅ **تم شراء الرقم بنجاح!**\n\n"
-                f"📱 **الرقم:** `{phone}`\n"
-                f"🆔 **معرف التفعيل:** `{activation_id}`\n"
-                f"🌍 **ID الدولة:** `{country_numeric_id}`\n\n"
-                f"🔄 **جاري مراقبة وصول كود الـ SMS تلقائياً...** سيتم إرساله هنا فور وصوله.",
-                parse_mode="Markdown",
-                reply_markup=markup
-            )
-
-            t = threading.Thread(target=auto_check_sms, args=(chat_id, user_key, activation_id, phone))
-            t.daemon = True
-            t.start()
-
-        else:
-            bot.send_message(chat_id, f"❌ تعذر شراء الرقم. السبب: {res.text}")
-
-    elif data.startswith("cancel_"):
-        activation_id = data.split("_")[1]
-        bot.answer_callback_query(call.id, "جاري إلغاء الرقم...")
-
-        params = {
-            'api_key': USER_API_KEYS[chat_id],
-            'action': 'setStatus',
-            'status': 8,
-            'id': activation_id
-        }
-        res = requests.get(API_URL, params=params)
-        status_text = res.text.strip()
-
-        if "ACCESS_CANCEL" in status_text or "ACCESS_OK" in status_text:
-            bot.edit_message_text(
-                chat_id=chat_id,
-                message_id=call.message.message_id,
-                text=f"🚫 **تم إلغاء الرقم بنجاح وإعادة رصيدك للحساب!**\n🆔 المعرف: `{activation_id}`",
-                parse_mode="Markdown"
-            )
-        else:
-            bot.send_message(
-                chat_id,
-                f"⚠️ لا يمكن إلغاء الرقم حالياً (قد يكون مر وقت طويل أو وصل الكود بالفعل).\nالاستجابة: {status_text}"
-            )
-
-def load_and_show_countries(chat_id, message_id, service_code, page=0):
-    user_key = USER_API_KEYS.get(chat_id)
-    try:
-        res = requests.get(API_URL, params={'api_key': user_key, 'action': 'getCountries'}, timeout=10)
-        countries_data = res.json()
-        
-        parsed_countries = []
-        if isinstance(countries_data, dict):
-            for k, v in countries_data.items():
-                if isinstance(v, dict):
-                    c_id = str(v.get("id", k))
-                    eng_name = str(v.get("eng", k)).lower()
-                    
-                    display_name = COUNTRY_FLAGS.get(eng_name, f"🌐 {eng_name.capitalize()}")
-                    parsed_countries.append({"id": c_id, "name": display_name, "raw": eng_name})
-
-        USER_COUNTRIES_CACHE[chat_id] = parsed_countries
-        show_countries_page_cached(chat_id, message_id, service_code, page)
-    except Exception:
-        bot.send_message(chat_id, "❌ حدث خطأ أثناء جلب قائمة الدول كاملة من الموقع.")
-
-def show_countries_page_cached(chat_id, message_id, service_code, page=0):
-    countries_list = USER_COUNTRIES_CACHE.get(chat_id, [])
-    items_per_page = 8
-    total_items = len(countries_list)
-    
-    start_idx = page * items_per_page
-    end_idx = start_idx + items_per_page
-    
-    page_countries = countries_list[start_idx:end_idx]
-    
-    markup = types.InlineKeyboardMarkup(row_width=2)
-    
-    row_buttons = []
-    for c in page_countries:
-        row_buttons.append(types.InlineKeyboardButton(c["name"], callback_data=f"select_country_{service_code}_{c['id']}_{c['raw']}"))
-    
-    for i in range(0, len(row_buttons), 2):
-        if i + 1 < len(row_buttons):
-            markup.add(row_buttons[i], row_buttons[i+1])
-        else:
-            markup.add(row_buttons[i])
-
-    nav_buttons = []
-    if page > 0:
-        nav_buttons.append(types.InlineKeyboardButton("⬅️ السابق", callback_data=f"cpage_{service_code}_{page-1}"))
-    if end_idx < total_items:
-        nav_buttons.append(types.InlineKeyboardButton("التالي ➡️", callback_data=f"cpage_{service_code}_{page+1}"))
-    
-    if nav_buttons:
-        markup.row(*nav_buttons)
-
-    btn_back = types.InlineKeyboardButton("🔙 رجوع للقائمة الرئيسية", callback_data="back_to_services")
-    markup.add(btn_back)
-
-    service_name = "واتساب" if service_code == "wa" else "تليجرام"
-    total_pages = (total_items + items_per_page - 1) // items_per_page
-    
-    try:
-        bot.edit_message_text(
-            chat_id=chat_id,
-            message_id=message_id,
-            text=f"🌍 **قائمة الدول المتاحة لخدمة ({service_name})**\n📄 الصفحة ({page+1} من {total_pages}):",
-            parse_mode="Markdown",
-            reply_markup=markup
-        )
-    except Exception:
-        pass
-
-if __name__ == "__main__":
-    keep_alive()
-    print("🤖 البوت يعمل الآن بسلاسة تامة...")
-    
-    while True:
-        try:
-            bot.infinity_polling(timeout=60, long_polling_timeout=60)
-        except Exception as e:
-            print(f"⚠️ حدث خطأ في الاتصال: {e}")
-            time.sleep(5)
+        buy
