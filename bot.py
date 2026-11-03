@@ -191,49 +191,43 @@ def handle_callbacks(call):
         
         try:
             response = requests.get(API_URL, params=params, timeout=10)
-            
-            # محاولة طباعة الاستجابة في الـ Logs لمعرفة شكل البيانات بدقة
-            print(f"API Response for {country_code}: {response.text[:200]}...")
-            
             data_json = response.json()
             
-            # التحقق مما إذا كانت البيانات مرجعة مباشرة أو داخل مفتاح الدولة
-            country_servers = data_json.get(country_code, {})
-            if not country_servers and isinstance(data_json, dict):
-                # إذا لم تجد المفتاح بالرمز، قد يكون الـ API يعيد هيكلاً مختلفاً، نحاول فحصه
-                country_servers = data_json
-
-            if not country_servers:
-                bot.send_message(chat_id, "⚠️ لا توجد سيرفرات أو أرقام متاحة لهذه الدولة حالياً من الموقع.")
+            # استخراج بيانات الدولة المحددة بناءً على كود الدولة (مثل sa أو eg)
+            country_data = data_json.get(country_code, {})
+            
+            if not country_data:
+                bot.send_message(chat_id, "⚠️ لا توجد أرقام أو سيرفرات متاحة لهذه الدولة حالياً.")
                 return
 
             markup = types.InlineKeyboardMarkup(row_width=1)
             
-            # التأكد من أن البيانات عبارة عن قاموس (Servers)
-            if isinstance(country_servers, dict):
-                for server_id, info in country_servers.items():
-                    if isinstance(info, dict):
-                        price = info.get("price", "N/A")
-                        count = info.get("count", "N/A")
-                        button_text = f"سيرفر #{server_id} | الكمية: {count} | السعر: {price} $"
-                        markup.add(types.InlineKeyboardButton(button_text, callback_data=f"buy_{service_code}_{country_code}_{server_id}"))
+            # الموقع يعيد بيانات السيرفرات تحت مفاتيح مثل "providers" أو مباشرة
+            servers = country_data.get("providers", country_data)
             
+            if isinstance(servers, dict):
+                for provider_id, info in servers.items():
+                    if isinstance(info, dict):
+                        price = info.get("price", "غير متوفر")
+                        count = info.get("count", "0")
+                        button_text = f"سيرفر #{provider_id} | الكمية: {count} | السعر: {price} $"
+                        markup.add(types.InlineKeyboardButton(button_text, callback_data=f"buy_{service_code}_{country_code}_{provider_id}"))
+
             if len(markup.keyboard) == 0:
-                bot.send_message(chat_id, "⚠️ لا توجد سيرفرات صالحة للعرض بهذه الدولة حالياً.")
+                bot.send_message(chat_id, "⚠️ لا توجد سيرفرات نشطة لهذه الدولة حالياً.")
                 return
 
             country_info = COUNTRIES.get(country_code, {"name": country_code, "flag": "🌐"})
             bot.send_message(
                 chat_id,
-                f"إليك السيرفرات المتاحة لدولة {country_info['flag']} {country_info['name']}:\nاختر السيرفر للشراء:",
+                f"إليك السيرفرات المتاحة لدولة {country_info['flag']} {country_info['name']}:\nاختر السيرفر المناسب للشراء:",
                 reply_markup=markup
             )
         except Exception as e:
-            print(f"Error fetching servers: {e}")
-            bot.send_message(chat_id, "❌ حدث خطأ أثناء الاتصال بجلب السيرفرات من الموقع.")
+            bot.send_message(chat_id, "❌ حدث خطأ أثناء جلب السيرفرات.")
 
     elif data.startswith("buy_"):
-        _, service, country, server_id = data.split("_")
+        _, service, country, provider_id = data.split("_")
         bot.answer_callback_query(call.id, "جاري طلب الرقم...")
         
         user_key = USER_API_KEYS[chat_id]
@@ -242,12 +236,14 @@ def handle_callbacks(call):
             'action': 'getNumber',
             'service': service,
             'country': country,
-            'providerIds': server_id
+            'providerIds': provider_id
         }
         res = requests.get(API_URL, params=buy_params)
         
         if "ACCESS_NUMBER" in res.text:
-            _, activation_id, phone = res.text.split(":")
+            parts = res.text.split(":")
+            activation_id = parts[1]
+            phone = parts[2] if len(parts) > 2 else "متاح"
             
             markup = types.InlineKeyboardMarkup(row_width=1)
             btn_cancel = types.InlineKeyboardButton("❌ إلغاء الرقم واسترداد الرصيد", callback_data=f"cancel_{activation_id}")
