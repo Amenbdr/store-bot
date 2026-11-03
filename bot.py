@@ -30,12 +30,12 @@ USER_API_KEYS = {}
 USER_STATES = {}
 
 COUNTRIES = {
-    "sa": {"name": "السعودية", "flag": "🇸🇦", "id": "sa"},
-    "eg": {"name": "مصر", "flag": "🇪🇬", "id": "eg"},
-    "ae": {"name": "الإمارات", "flag": "🇦🇪", "id": "ae"},
-    "usa": {"name": "أمريكا", "flag": "🇺🇸", "id": "us"},
-    "ru": {"name": "روسيا", "flag": "🇷🇺", "id": "ru"},
-    "uk": {"name": "بريطانيا", "flag": "🇬🇧", "id": "uk"}
+    "sa": {"name": "السعودية", "flag": "🇸🇦", "query": "saudi"},
+    "eg": {"name": "مصر", "flag": "🇪🇬", "query": "egypt"},
+    "ae": {"name": "الإمارات", "flag": "🇦🇪", "query": "emirates"},
+    "usa": {"name": "أمريكا", "flag": "🇺🇸", "query": "united-states"},
+    "ru": {"name": "روسيا", "flag": "🇷🇺", "query": "russia"},
+    "uk": {"name": "بريطانيا", "flag": "🇬🇧", "query": "kingdom"}
 }
 
 # دالة الفحص التلقائي لوصول الكود في الخلفية
@@ -194,17 +194,20 @@ def handle_callbacks(call):
             data_json = response.json()
             
             target_country_data = {}
-            query_term = COUNTRIES.get(country_key, {}).get("name", "").lower()
+            matched_country_name = ""
+            query_term = COUNTRIES.get(country_key, {}).get("query", country_key)
             
             for api_country_name, servers_dict in data_json.items():
                 if query_term in api_country_name.lower() or country_key in api_country_name.lower():
                     target_country_data = servers_dict
+                    matched_country_name = api_country_name
                     break
             
             if not target_country_data:
                 for api_country_name, servers_dict in data_json.items():
                     if isinstance(servers_dict, dict) and len(servers_dict) > 0:
                         target_country_data = servers_dict
+                        matched_country_name = api_country_name
                         break
 
             if not target_country_data or not isinstance(target_country_data, dict):
@@ -217,8 +220,8 @@ def handle_callbacks(call):
                     price = info.get("price", "N/A")
                     count = info.get("count", "N/A")
                     button_text = f"سيرفر #{provider_id} | الكمية: {count} | السعر: {price} $"
-                    # تمرير مفتاح الدولة المختصر الصحيح (مثل sa)
-                    markup.add(types.InlineKeyboardButton(button_text, callback_data=f"buy_{service_code}_{country_key}_{provider_id}"))
+                    # نمرر اسم الدولة الحقيقي الذي جلبناه من الاستجابة مع معرف السيرفر
+                    markup.add(types.InlineKeyboardButton(button_text, callback_data=f"buy_{service_code}_{matched_country_name}_{provider_id}"))
 
             if len(markup.keyboard) == 0:
                 bot.send_message(chat_id, "⚠️ لا توجد سيرفرات نشطة لهذه الدولة حالياً.")
@@ -234,22 +237,23 @@ def handle_callbacks(call):
             bot.send_message(chat_id, f"❌ حدث خطأ أثناء جلب السيرفرات.")
 
     elif data.startswith("buy_"):
+        # استخراج بيانات الشراء مع دعم الأسماء التي تحتوي على شرطات مثل united-states
         parts = data.split("_")
         service = parts[1]
-        country_key = parts[2]
-        provider_id = parts[3]
+        # اسم الدولة قد يحتوي على شرطات، لذا نجمعه بالشكل الصحيح
+        provider_id = parts[-1]
+        country_name = "_".join(parts[2:-1])
         
         bot.answer_callback_query(call.id, "جاري طلب الرقم...")
         
         user_key = USER_API_KEYS[chat_id]
-        country_id_val = COUNTRIES.get(country_key, {}).get("id", country_key)
         
-        # تمرير المعرف المعتمد لدولة الشراء
+        # استخدام دالة الشراء مع الدولة وسيرفر المزود بدقة
         buy_params = {
             'api_key': user_key,
             'action': 'getNumber',
             'service': service,
-            'country': country_id_val,
+            'country': country_name,
             'providerIds': provider_id
         }
         res = requests.get(API_URL, params=buy_params)
