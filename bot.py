@@ -4,18 +4,14 @@ import requests
 from telebot import TeleBot, types
 
 # ==================== الإعدادات الأساسية ====================
-TELEGRAM_BOT_TOKEN = "5418318795:AAG31t5CD7OY14kgCNkRex5r7CwSy81jZOI"  # التوكن من BotFather
-
+TELEGRAM_BOT_TOKEN = "5418318795:AAG3lt5CD7OYl4kgCNkReX5r7CwSy8ljZ0I" # التوكن الجديد الخاص بك
 API_URL = "https://smsbower.app/stubs/handler_api.php"
 # ==========================================================
 
 bot = TeleBot(TELEGRAM_BOT_TOKEN)
 
-# قاموس مؤقت لحفظ مفاتيح الـ API لكل مستخدم (مפתח القاموس هو معرف المستخدم chat_id)
-# (ملاحظة: في المشاريع الكبيرة يفضل استبدال هذا بقاعدة بيانات مثل SQLite)
+# قاموس مؤقت لحفظ مفاتيح الـ API لكل مستخدم
 USER_API_KEYS = {}
-
-# قاموس مؤقت لمتابعة حالة المستخدم (مثلاً: ينتظر إدخال مفتاح الـ API)
 USER_STATES = {}
 
 COUNTRIES = {
@@ -85,20 +81,18 @@ def send_welcome(message):
         reply_markup=markup
     )
 
-# 2. استقبال النصوص (مثل مفتاح الـ API عندما يطلبه البوت)
+# 2. استقبال النصوص (مفتاح الـ API)
 @bot.message_handler(func=lambda message: USER_STATES.get(message.chat.id) == "waiting_for_api_key")
 def receive_api_key(message):
     chat_id = message.chat.id
     api_key = message.text.strip()
     
-    # اختبار صلاحية المفتاح عبر فحص الرصيد
     params = {'api_key': api_key, 'action': 'getBalance'}
     try:
         res = requests.get(API_URL, params=params, timeout=10)
         if "ACCESS_BALANCE" in res.text or ":" in res.text:
-            # حفظ المفتاح للمستخدم
             USER_API_KEYS[chat_id] = api_key
-            USER_STATES[chat_id] = None # إنهاء حالة الانتظار
+            USER_STATES[chat_id] = None 
             
             balance = res.text.split(":")[-1]
             bot.reply_to(message, f"✅ **تم حفظ مفتاح الـ API بنجاح!**\n💰 رصيدك الحالي: {balance} $", parse_mode="Markdown")
@@ -113,13 +107,11 @@ def handle_callbacks(call):
     chat_id = call.message.chat.id
     data = call.data
 
-    # طلب إدخال المفتاح
     if data == "set_api_key":
         USER_STATES[chat_id] = "waiting_for_api_key"
         bot.answer_callback_query(call.id)
         bot.send_message(chat_id, "✍️ أرسل الآن **مفتاح الـ API (API Key)** الخاص بك في رسالة جديدة:")
 
-    # فحص الرصيد
     elif data == "check_balance":
         if chat_id not in USER_API_KEYS:
             bot.answer_callback_query(call.id, "يجب إدخال مفتاح API أولاً!", show_alert=True)
@@ -133,7 +125,6 @@ def handle_callbacks(call):
         else:
             bot.send_message(chat_id, f"❌ خطأ في المفتاح أو استجابة الموقع: {res.text}")
 
-    # القائمة الرئيسية لاختيار التطبيق
     elif data == "main_menu" or data == "back_to_services":
         if chat_id not in USER_API_KEYS:
             bot.answer_callback_query(call.id, "يجب إدخال مفتاح API أولاً!", show_alert=True)
@@ -154,7 +145,6 @@ def handle_callbacks(call):
             reply_markup=markup
         )
 
-    # اختيار التطبيق -> عرض الدول مع الأعلام
     elif data.startswith("service_"):
         service_code = data.split("_")[1]
         service_name = "واتساب" if service_code == "wa" else "تليجرام"
@@ -170,11 +160,10 @@ def handle_callbacks(call):
         bot.edit_message_text(
             chat_id=chat_id,
             message_id=call.message.message_id,
-            text=f"اختر الدولة لتطبيق ({service_name})[span_1](start_span)[span_1](end_span):",
+            text=f"اختر الدولة لتطبيق ({service_name}):",
             reply_markup=markup
         )
 
-    # اختيار الدولة -> جلب السيرفرات والأسعار والمخزون
     elif data.startswith("select_"):
         _, service_code, country_code = data.split("_")
         bot.answer_callback_query(call.id, "جاري جلب السيرفرات المتاحة...")
@@ -204,13 +193,12 @@ def handle_callbacks(call):
             country_info = COUNTRIES.get(country_code, {"name": country_code, "flag": "🌐"})
             bot.send_message(
                 chat_id,
-                f"إليك السيرفرات المتاحة لدولة {country_info['flag']} {country_info['name']}[span_2](start_span)[span_2](end_span):\nاختر السيرفر للشراء:",
+                f"إليك السيرفرات المتاحة لدولة {country_info['flag']} {country_info['name']}:\nاختر السيرفر للشراء:",
                 reply_markup=markup
             )
         except Exception:
             bot.send_message(chat_id, "❌ حدث خطأ أثناء الاتصال بالسيرفرات.")
 
-    # شراء الرقم وتشغيل الفحص التلقائي
     elif data.startswith("buy_"):
         _, service, country, server_id = data.split("_")
         bot.answer_callback_query(call.id, "جاري طلب الرقم...")
@@ -242,7 +230,6 @@ def handle_callbacks(call):
                 reply_markup=markup
             )
 
-            # تشغيل الفحص التلقائي في الخلفية مع تمرير مفتاح المستخدم الخاص به
             t = threading.Thread(target=auto_check_sms, args=(chat_id, user_key, activation_id, phone))
             t.daemon = True
             t.start()
@@ -250,7 +237,6 @@ def handle_callbacks(call):
         else:
             bot.send_message(chat_id, f"❌ تعذر شراء الرقم. السبب: {res.text}")
 
-    # إلغاء الرقم واسترداد الرصيد
     elif data.startswith("cancel_"):
         activation_id = data.split("_")[1]
         bot.answer_callback_query(call.id, "جاري إلغاء الرقم...")
@@ -278,5 +264,5 @@ def handle_callbacks(call):
             )
 
 if __name__ == "__main__":
-    print("🤖 البوت يعمل الآن ويطلب مفتاح API من المستخدمين...")
+    print("🤖 البوت يعمل الآن بنجاح...")
     bot.infinity_polling()
