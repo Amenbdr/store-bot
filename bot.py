@@ -181,33 +181,54 @@ def handle_callbacks(call):
 
     elif data.startswith("select_"):
         _, service_code, country_key = data.split("_")
-        bot.answer_callback_query(call.id, "جاري جلب السيرفرات المتاحة...")
+        bot.answer_callback_query(call.id, "جاري جلب السيرفرات والـ IDs...")
 
-        params = {
-            'api_key': USER_API_KEYS[chat_id],
-            'action': 'getTopCountriesByService',
-            'service': service_code
-        }
+        user_key = USER_API_KEYS[chat_id]
         
         try:
+            # 1. جلب قائمة الدول للحصول على الـ ID الرقمي الصحيح لكل دولة بناءً على وثائق الموقع
+            countries_res = requests.get(API_URL, params={'api_key': user_key, 'action': 'getCountries'}, timeout=10)
+            countries_json = countries_res.json()
+            
+            country_numeric_id = ""
+            query_term = COUNTRIES.get(country_key, {}).get("query", country_key)
+            
+            # البحث عن الـ ID الرقمي المناسب للدولة من استجابة getCountries
+            if isinstance(countries_json, dict):
+                for k, v in countries_json.items():
+                    if isinstance(v, dict):
+                        eng_name = str(v.get("eng", "")).lower()
+                        rus_name = str(v.get("rus", "")).lower()
+                        if query_term in eng_name or query_term in rus_name or k.lower() == country_key:
+                            country_numeric_id = str(v.get("id", k))
+                            break
+            
+            if not country_numeric_id:
+                country_numeric_id = country_key # قيمة احتياطية
+
+            # 2. جلب السيرفرات المتاحة للخدمة
+            params = {
+                'api_key': user_key,
+                'action': 'getTopCountriesByService',
+                'service': service_code
+            }
             response = requests.get(API_URL, params=params, timeout=10)
             data_json = response.json()
             
             target_country_data = {}
-            matched_country_name = ""
-            query_term = COUNTRIES.get(country_key, {}).get("query", country_key)
+            matched_api_country = ""
             
             for api_country_name, servers_dict in data_json.items():
                 if query_term in api_country_name.lower() or country_key in api_country_name.lower():
                     target_country_data = servers_dict
-                    matched_country_name = api_country_name
+                    matched_api_country = api_country_name
                     break
             
             if not target_country_data:
                 for api_country_name, servers_dict in data_json.items():
                     if isinstance(servers_dict, dict) and len(servers_dict) > 0:
                         target_country_data = servers_dict
-                        matched_country_name = api_country_name
+                        matched_api_country = api_country_name
                         break
 
             if not target_country_data or not isinstance(target_country_data, dict):
@@ -220,7 +241,8 @@ def handle_callbacks(call):
                     price = info.get("price", "N/A")
                     count = info.get("count", "N/A")
                     button_text = f"سيرفر #{provider_id} | الكمية: {count} | السعر: {price} $"
-                    markup.add(types.InlineKeyboardButton(button_text, callback_data=f"buy_{service_code}_{matched_country_name}_{provider_id}"))
+                    # نمرر الـ ID الرقمي الصحيح للدولة مع معرف السيرفر في الـ callback
+                    markup.add(types.InlineKeyboardButton(button_text, callback_data=f"buy_{service_code}_{country_numeric_id}_{provider_id}"))
 
             if len(markup.keyboard) == 0:
                 bot.send_message(chat_id, "⚠️ لا توجد سيرفرات نشطة لهذه الدولة حالياً.")
@@ -233,32 +255,27 @@ def handle_callbacks(call):
                 reply_markup=markup
             )
         except Exception as e:
-            bot.send_message(chat_id, f"❌ حدث خطأ أثناء جلب السيرفرات.")
+            bot.send_message(chat_id, f"❌ حدث خطأ أثناء جلب البيانات.")
 
     elif data.startswith("buy_"):
         parts = data.split("_")
         service = parts[1]
-        provider_id = parts[-1]
-        country_name = "_".join(parts[2:-1])
+        country_id_val = parts[2] # هذا هو الـ ID الرقمي الصحيح الذي تم جلبه من getCountries
+        provider_id = parts[3]
         
-        bot.answer_callback_query(call.id, "جاري طلب الرقم (الإصدار الثاني)...")
+        bot.answer_callback_query(call.id, "جاري طلب الرقم...")
         
         user_key = USER_API_KEYS[chat_id]
         
-        # استخدام دالة الإصدار الثاني للشراء المتوافقة مع وثائق الموقع الجديد
+        # إرسال طلب الشراء بالمعرف الرقمي الصحيح للدولة والسيرفر
         buy_params = {
             'api_key': user_key,
-            'action': 'getNumberV2',
+            'action': 'getNumber',
             'service': service,
-            'country': country_name,
+            'country': country_id_val,
             'providerIds': provider_id
         }
         res = requests.get(API_URL, params=buy_params)
-        
-        # في حال لم تنجح getNumberV2 نجرب الدالة القياسية كاحتياطي بنفس الطلب
-        if "ACCESS_NUMBER" not in res.text:
-            buy_params['action'] = 'getNumber'
-            res = requests.get(API_URL, params=buy_params)
         
         if "ACCESS_NUMBER" in res.text:
             res_parts = res.text.split(":")
@@ -284,7 +301,7 @@ def handle_callbacks(call):
             t.start()
 
         else:
-            bot.send_message(chat_id, f"❌ تعذر شراء الرقم. الاستجابة من الموقع: {res.text}")
+            bot.send_message(chat_id, f"❌ تعذر شراء الرقم. السبب: {res.text}")
 
     elif data.startswith("cancel_"):
         activation_id = data.split("_")[1]
