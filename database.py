@@ -1,5 +1,19 @@
 import sqlite3
 
+# --- الدوال المباشرة (لتوافق الاستيراد القديم والجديد) ---
+def init_db():
+    Database.init_db()
+
+def get_setting(key: str, default=None):
+    return Database.get_setting(key, default)
+
+def set_setting(key: str, value: str):
+    Database.set_setting(key, value)
+
+def transfer_balance_by_identifier(sender_id: str, recipient_identifier: str, amount: float):
+    return Database.transfer_balance_by_identifier(sender_id, recipient_identifier, amount)
+
+
 class Database:
     DB_NAME = "database.db"
 
@@ -9,7 +23,7 @@ class Database:
         conn = sqlite3.connect(Database.DB_NAME)
         cursor = conn.cursor()
         
-        # 1. جدول المستخدمين (الآيدي، الإيميل، كلمة المرور، الرصيد، حالة الحظر)
+        # 1. جدول المستخدمين
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS users (
                 user_id TEXT PRIMARY KEY,
@@ -21,7 +35,7 @@ class Database:
             )
         """)
         
-        # 2. جدول الإعدادات العامة (لتخزين مفتاح الـ API وإعدادات البوت ديناميكياً)
+        # 2. جدول الإعدادات العامة
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS settings (
                 key TEXT PRIMARY KEY,
@@ -29,7 +43,7 @@ class Database:
             )
         """)
         
-        # 3. جدول المعاملات المالية (للأرصدة، الإيداعات، ومتابعة عمليات الشراء)
+        # 3. جدول المعاملات المالية
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS transactions (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -54,10 +68,8 @@ class Database:
         conn.commit()
         conn.close()
 
-    # ==================== دوال الإعدادات (Settings) ====================
     @staticmethod
     def get_setting(key: str, default=None):
-        """جلب إعداد معين من قاعدة البيانات"""
         conn = sqlite3.connect(Database.DB_NAME)
         cursor = conn.cursor()
         cursor.execute("SELECT value FROM settings WHERE key = ?", (key,))
@@ -67,17 +79,14 @@ class Database:
 
     @staticmethod
     def set_setting(key: str, value: str):
-        """حفظ أو تحديث إعداد معين في قاعدة البيانات"""
         conn = sqlite3.connect(Database.DB_NAME)
         cursor = conn.cursor()
         cursor.execute("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", (key, value))
         conn.commit()
         conn.close()
 
-    # ==================== دوال المستخدمين (Users) ====================
     @staticmethod
     def get_or_create_user(user_id: str):
-        """التحقق من وجود المستخدم أو إنشائه تلقائياً إذا كان جديداً"""
         conn = sqlite3.connect(Database.DB_NAME)
         cursor = conn.cursor()
         cursor.execute("SELECT user_id, balance, is_banned FROM users WHERE user_id = ?", (user_id,))
@@ -89,11 +98,10 @@ class Database:
             user = (user_id, 0.0, 0)
             
         conn.close()
-        return user  # (user_id, balance, is_banned)
+        return user
 
     @staticmethod
     def update_user_balance(user_id: str, amount: float, tx_type: str = 'deposit'):
-        """تحديث رصيد المستخدم وتسجيل المعاملة المالية"""
         conn = sqlite3.connect(Database.DB_NAME)
         cursor = conn.cursor()
         cursor.execute("UPDATE users SET balance = balance + ? WHERE user_id = ?", (amount, user_id))
@@ -101,26 +109,20 @@ class Database:
         conn.commit()
         conn.close()
 
-    # ==================== نظام تحويل الأرصدة (Transfer) ====================
     @staticmethod
     def transfer_balance_by_identifier(sender_id: str, recipient_identifier: str, amount: float):
-        """
-        تحويل رصيد من مستخدم لآخر عبر الآيدي (user_id) أو البريد الإلكتروني (email)
-        """
         if amount <= 0:
             return False, "❌ مبلغ التحويل غير صالح."
             
         conn = sqlite3.connect(Database.DB_NAME)
         cursor = conn.cursor()
         
-        # 1. فحص رصيد المرسل
         cursor.execute("SELECT balance FROM users WHERE user_id = ?", (sender_id,))
         sender_row = cursor.fetchone()
         if not sender_row or sender_row[0] < amount:
             conn.close()
             return False, "❌ رصيدك الحالي غير كافٍ لإتمام عملية التحويل."
             
-        # 2. البحث عن المستخدم المستلم (بالآيدي أو الإيميل)
         cursor.execute("SELECT user_id, balance FROM users WHERE user_id = ? OR email = ?", (recipient_identifier, recipient_identifier))
         recipient_row = cursor.fetchone()
         
@@ -134,7 +136,6 @@ class Database:
             conn.close()
             return False, "❌ لا يمكنك تحويل الرصيد إلى نفس حسابك الشخصي."
             
-        # 3. تنفيذ الخصم والإضافة وتوثيق العمليات المالية
         cursor.execute("UPDATE users SET balance = balance - ? WHERE user_id = ?", (amount, sender_id))
         cursor.execute("INSERT INTO transactions (user_id, amount, type) VALUES (?, ?, ?)", (sender_id, amount, 'spend_transfer'))
         
