@@ -28,24 +28,21 @@ bot = TeleBot(TELEGRAM_BOT_TOKEN)
 
 USER_API_KEYS = {}
 USER_STATES = {}
+USER_COUNTRIES_CACHE = {}
 
-# قائمة الـ 12 دولة الأساسية مع أسمائها بالعربية، أعلامها، وأسمائها المعترف بها في الموقع
-POPULAR_COUNTRIES = [
-    {"id": "0", "name": "🇷🇺 روسيا", "keys": ["russia", "0"]},
-    {"id": "1", "name": "🇺🇦 أوكرانيا", "keys": ["ukraine", "1"]},
-    {"id": "2", "name": "🇰🇿 كازاخستان", "keys": ["kazakhstan", "2"]},
-    {"id": "3", "name": "🇨🇳 الصين", "keys": ["china", "3"]},
-    {"id": "5", "name": "🇺🇸 الولايات المتحدة", "keys": ["usa", "united states", "5"]},
-    {"id": "6", "name": "🇨🇦 كندا", "keys": ["canada", "6"]},
-    {"id": "12", "name": "🇬🇧 بريطانيا", "keys": ["uk", "united kingdom", "12"]},
-    {"id": "15", "name": "🇵🇱 بولندا", "keys": ["poland", "15"]},
-    {"id": "16", "name": "🇫🇷 فرنسا", "keys": ["france", "16"]},
-    {"id": "22", "name": "🇮🇳 الهند", "keys": ["india", "22"]},
-    {"id": "32", "name": "🇮🇩 إندونيسيا", "keys": ["indonesia", "32"]},
-    {"id": "36", "name": "🇪🇬 مصر", "keys": ["egypt", "36"]}
-]
+# قاموس لربط أسماء الدول الشائعة بأعلامها العربية
+COUNTRY_FLAGS = {
+    "russia": "🇷🇺 روسيا", "ukraine": "🇺🇦 أوكرانيا", "kazakhstan": "🇰🇿 كازاخستان",
+    "china": "🇨🇳 الصين", "philippines": "🇵🇭 الفلبين", "usa": "🇺🇸 الولايات المتحدة",
+    "canada": "🇨🇦 كندا", "indonesia": "🇮🇩 إندونيسيا", "malaysia": "🇲🇾 ماليزيا",
+    "kenya": "🇰🇪 كينيا", "vietnam": "🇻🇳 فيتنام", "kyrgyzstan": "🇰🇬 قيرغيزستان",
+    "uk": "🇬🇧 بريطانيا", "poland": "🇵🇱 بولندا", "france": "🇫🇷 فرنسا",
+    "egypt": "🇪🇬 مصر", "india": "🇮 الهند", "pakistan": "🇵🇰 باكستان",
+    "brazil": "🇧🇷 البرازيل", "bangladesh": "🇧🇩 بنجلاديش", "ethiopia": "🇪🇹 إثيوبيا",
+    "nigeria": "🇳🇬 نيجيريا", "tanzania": "🇹🇿 تنزانيا", "south africa": "🇿🇦 جنوب أفريقيا"
+}
 
-# دالة الفحص التلقائي لوصول كود الـ SMS في الخلفية مطابقة لتوثيق getStatus
+# دالة الفحص التلقائي لوصول كود الـ SMS في الخلفية
 def auto_check_sms(chat_id, api_key, activation_id, phone):
     max_attempts = 60  
     attempt = 0
@@ -175,21 +172,20 @@ def handle_callbacks(call):
 
     elif data.startswith("service_"):
         service_code = data.split("_")[1]
-        show_countries_page(chat_id, call.message.message_id, service_code, page=0)
+        bot.answer_callback_query(call.id, "جاري جلب جميع الدول المتاحة من الموقع...")
+        load_and_show_countries(chat_id, call.message.message_id, service_code, page=0)
 
     elif data.startswith("cpage_"):
         parts = data.split("_")
         service_code = parts[1]
         page = int(parts[2])
-        show_countries_page(chat_id, call.message.message_id, service_code, page=page)
+        show_countries_page_cached(chat_id, call.message.message_id, service_code, page=page)
 
     elif data.startswith("select_country_"):
         parts = data.split("_")
         service_code = parts[2]
         country_id = parts[3]
-        
-        # استخراج اسم الدولة المتبقي في الكอลباك
-        country_key = "_".join(parts[4:])
+        country_raw_name = "_".join(parts[4:])
         
         bot.answer_callback_query(call.id, "جاري جلب السيرفرات والأسعار والمخزون...")
 
@@ -206,14 +202,8 @@ def handle_callbacks(call):
             
             servers = {}
             if isinstance(data_json, dict):
-                # البحث بمرونة مطابقة لجميع مفاتيح الدولة المحتملة في الاستجابة
                 for dk, dv in data_json.items():
-                    if country_key.lower() in dk.lower() or dk.lower() in country_key.lower():
-                        servers = dv
-                        break
-                # إذا لم يتم العثور المباشر، جلب أول عنصر كافتراضي أو استخدام بيانات عامة
-                if not servers and len(data_json) > 0:
-                    for dk, dv in data_json.items():
+                    if str(dk).lower() == country_raw_name.lower() or country_raw_name.lower() in str(dk).lower():
                         servers = dv
                         break
 
@@ -226,22 +216,20 @@ def handle_callbacks(call):
                         count = info.get("count", "0")
                         button_text = f"🌐 سيرفر #{provider_id} | المخزون: {count} | السعر: {price} $"
                         markup.add(types.InlineKeyboardButton(button_text, callback_data=f"buy_{service_code}_{country_id}_{provider_id}"))
-            
-            # دائماً إضافة خيار الشراء المباشر لضمان عدم توقف المستخدم أبداً
-            markup.add(types.InlineKeyboardButton("🚀 شراء مباشر (سيرفر افتراضي)", callback_data=f"buy_{service_code}_{country_id}_0"))
+            else:
+                markup.add(types.InlineKeyboardButton("🚀 شراء مباشر من السيرفر المتاح", callback_data=f"buy_{service_code}_{country_id}_0"))
 
-            btn_back = types.InlineKeyboardButton("🔙 رجوع للقائمة", callback_data=f"service_{service_code}")
+            btn_back = types.InlineKeyboardButton("🔙 رجوع لقائمة الدول", callback_data=f"service_{service_code}")
             markup.add(btn_back)
 
             bot.edit_message_text(
                 chat_id=chat_id,
                 message_id=call.message.message_id,
-                text=f"📊 **تفاصيل السيرفرات والأسعار والمخزون:**\nاختر السيرفر المناسب للشراء:",
+                text=f"📊 **سيرفرات وأسعار ومخزون الدولة (ID: {country_id}):**\nاختر السيرفر المناسب للشراء:",
                 parse_mode="Markdown",
                 reply_markup=markup
             )
         except Exception:
-            # في حال حدوث أي خطأ بالاستجابة، السماح بالشراء المباشر فوراً
             markup = types.InlineKeyboardMarkup(row_width=1)
             markup.add(types.InlineKeyboardButton("🚀 شراء مباشر سريع", callback_data=f"buy_{service_code}_{country_id}_0"))
             markup.add(types.InlineKeyboardButton("🔙 رجوع", callback_data=f"service_{service_code}"))
@@ -249,7 +237,7 @@ def handle_callbacks(call):
             bot.edit_message_text(
                 chat_id=chat_id,
                 message_id=call.message.message_id,
-                text="⚠️ تعذر جلب تفاصيل السيرفرات بدقة، يمكنك المتابعة بالشراء المباشر:",
+                text="⚠️ تعذر جلب السيرفرات التفصيلية، يمكنك المتابعة بالشراء المباشر للدولة المحددة:",
                 reply_markup=markup
             )
 
@@ -263,13 +251,16 @@ def handle_callbacks(call):
         
         user_key = USER_API_KEYS[chat_id]
         
+        # تمرير الـ ID الرقمي الصحيح المعتمَد حصرياً للدولة لمنع تداخل الأرقام
         buy_params = {
             'api_key': user_key,
             'action': 'getNumber',
             'service': service,
-            'country': country_numeric_id,
-            'providerIds': provider_id
+            'country': country_numeric_id
         }
+        if provider_id != "0":
+            buy_params['providerIds'] = provider_id
+
         res = requests.get(API_URL, params=buy_params)
         
         if "ACCESS_NUMBER" in res.text:
@@ -285,7 +276,8 @@ def handle_callbacks(call):
                 chat_id,
                 f"✅ **تم شراء الرقم بنجاح!**\n\n"
                 f"📱 **الرقم:** `{phone}`\n"
-                f"🆔 **معرف التفعيل:** `{activation_id}`\n\n"
+                f"🆔 **معرف التفعيل:** `{activation_id}`\n"
+                f"🌍 **ID الدولة:** `{country_numeric_id}`\n\n"
                 f"🔄 **جاري مراقبة وصول كود الـ SMS تلقائياً...** سيتم إرساله هنا فور وصوله.",
                 parse_mode="Markdown",
                 reply_markup=markup
@@ -308,4 +300,43 @@ def handle_callbacks(call):
             'status': 8,
             'id': activation_id
         }
-        res = requests.get(API_URL, params=
+        res = requests.get(API_URL, params=params)
+        status_text = res.text.strip()
+
+        if "ACCESS_CANCEL" in status_text or "ACCESS_OK" in status_text:
+            bot.edit_message_text(
+                chat_id=chat_id,
+                message_id=call.message.message_id,
+                text=f"🚫 **تم إلغاء الرقم بنجاح وإعادة رصيدك للحساب!**\n🆔 المعرف: `{activation_id}`",
+                parse_mode="Markdown"
+            )
+        else:
+            bot.send_message(
+                chat_id,
+                f"⚠️ لا يمكن إلغاء الرقم حالياً (قد يكون مر وقت طويل أو وصل الكود بالفعل).\nالاستجابة: {status_text}"
+            )
+
+# دالة لجلب وترتيب جميع الدول من دالة getCountries بشكل كامل بدون نقص
+def load_and_show_countries(chat_id, message_id, service_code, page=0):
+    user_key = USER_API_KEYS.get(chat_id)
+    try:
+        res = requests.get(API_URL, params={'api_key': user_key, 'action': 'getCountries'}, timeout=10)
+        countries_data = res.json()
+        
+        parsed_countries = []
+        if isinstance(countries_data, dict):
+            for k, v in countries_data.items():
+                if isinstance(v, dict):
+                    c_id = str(v.get("id", k))
+                    eng_name = str(v.get("eng", k)).lower()
+                    
+                    # جلب الاسم العربي والعلم إذا توفر، وإلا اسم الموقع
+                    display_name = COUNTRY_FLAGS.get(eng_name, f"🌐 {eng_name.capitalize()}")
+                    parsed_countries.append({"id": c_id, "name": display_name, "raw": eng_name})
+
+        USER_COUNTRIES_CACHE[chat_id] = parsed_countries
+        show_countries_page_cached(chat_id, message_id, service_code, page)
+    except Exception:
+        bot.send_message(chat_id, "❌ حدث خطأ أثناء جلب قائمة الدول كاملة من الموقع.")
+
+# دالة عرض الدول بالصفحات والتنقل الس
