@@ -29,7 +29,7 @@ bot = TeleBot(TELEGRAM_BOT_TOKEN)
 USER_API_KEYS = {}
 USER_STATES = {}
 
-# دالة الفحص التلقائي لوصول الكود في الخلفية (محدثة لضمان التقاط الكود بدقة)
+# دالة الفحص التلقائي لوصول الكود في الخلفية
 def auto_check_sms(chat_id, api_key, activation_id, phone):
     max_attempts = 60  
     attempt = 0
@@ -47,11 +47,7 @@ def auto_check_sms(chat_id, api_key, activation_id, phone):
             res = requests.get(API_URL, params=params, timeout=10)
             status_text = res.text.strip()
 
-            # طباعة الاستجابة في السجلات للمتابعة
-            print(f"CHECK STATUS RES: {status_text} FOR ID: {activation_id}")
-
             if "STATUS_OK" in status_text or ":" in status_text:
-                # إذا عادت الاستجابة بالكود (مثل STATUS_OK:123456 أو كود مباشر)
                 parts = status_text.split(":")
                 code = parts[-1] if len(parts) > 1 else status_text
 
@@ -67,8 +63,7 @@ def auto_check_sms(chat_id, api_key, activation_id, phone):
                 bot.send_message(chat_id, f"❌ تم إلغاء الرقم `{phone}` مسبقاً.", parse_mode="Markdown")
                 return
                 
-        except Exception as e:
-            print(f"Error in auto_check: {e}")
+        except Exception:
             pass
 
     bot.send_message(
@@ -206,7 +201,7 @@ def handle_callbacks(call):
                 text="اختر الدولة المطلوبة:",
                 reply_markup=markup
             )
-        except Exception as e:
+        except Exception:
             bot.send_message(chat_id, f"❌ حدث خطأ أثناء جلب قائمة الدول.")
 
     elif data.startswith("select_country_"):
@@ -248,7 +243,7 @@ def handle_callbacks(call):
                 parse_mode="Markdown",
                 reply_markup=markup
             )
-        except Exception as e:
+        except Exception:
             bot.send_message(chat_id, f"❌ حدث خطأ أثناء جلب السيرفرات.")
 
     elif data.startswith("buy_"):
@@ -261,6 +256,7 @@ def handle_callbacks(call):
         
         user_key = USER_API_KEYS[chat_id]
         
+        # محاولة طلب الرقم باستخدام اسم الدولة واسم الخدمة وسيرفر المزود
         buy_params = {
             'api_key': user_key,
             'action': 'getNumber',
@@ -270,6 +266,16 @@ def handle_callbacks(call):
         }
         res = requests.get(API_URL, params=buy_params)
         
+        # إذا ظهر خطأ WRONG_COUNTRY نجرب إرسال المعرف بدون اسم الدولة أو باستخدام كود بديل
+        if "WRONG_COUNTRY" in res.text:
+            buy_params_alt = {
+                'api_key': user_key,
+                'action': 'getNumber',
+                'service': service,
+                'providerIds': provider_id
+            }
+            res = requests.get(API_URL, params=buy_params_alt)
+
         if "ACCESS_NUMBER" in res.text:
             res_parts = res.text.split(":")
             activation_id = res_parts[1]
