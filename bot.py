@@ -29,6 +29,22 @@ bot = TeleBot(TELEGRAM_BOT_TOKEN)
 USER_API_KEYS = {}
 USER_STATES = {}
 
+# قائمة الـ 12 دولة الأساسية مع أسمائها بالعربية وأعلامها ومعرفاتها الرقمية
+POPULAR_COUNTRIES = [
+    {"id": "0", "name": "🇷🇺 روسيا", "eng": "russia"},
+    {"id": "1", "name": "🇺🇦 أوكرانيا", "eng": "ukraine"},
+    {"id": "2", "name": "🇰🇿 كازاخستان", "eng": "kazakhstan"},
+    {"id": "3", "name": "🇨🇳 الصين", "eng": "china"},
+    {"id": "5", "name": "🇺🇸 الولايات المتحدة", "eng": "usa"},
+    {"id": "6", "name": "🇨🇦 كندا", "eng": "canada"},
+    {"id": "12", "name": "🇬🇧 بريطانيا", "eng": "uk"},
+    {"id": "15", "name": "🇵🇱 بولندا", "eng": "poland"},
+    {"id": "16", "name": "🇫🇷 فرنسا", "eng": "france"},
+    {"id": "22", "name": "🇮🇳 الهند", "eng": "india"},
+    {"id": "32", "name": "🇮🇩 إندونيسيا", "eng": "indonesia"},
+    {"id": "36", "name": "🇪🇬 مصر", "eng": "egypt"}
+]
+
 # دالة الفحص التلقائي لوصول كود الـ SMS في الخلفية مطابقة لتوثيق getStatus
 def auto_check_sms(chat_id, api_key, activation_id, phone):
     max_attempts = 60  
@@ -161,68 +177,67 @@ def handle_callbacks(call):
         service_code = data.split("_")[1]
         service_name = "واتساب" if service_code == "wa" else "تليجرام"
         
-        markup = types.InlineKeyboardMarkup(row_width=2)
-        btn_all = types.InlineKeyboardButton("🌐 عرض الدول المتاحة", callback_data=f"countries_{service_code}")
-        markup.add(btn_all)
-        
-        btn_back = types.InlineKeyboardButton("🔙 رجوع", callback_data="back_to_services")
-        markup.add(btn_back)
-        
-        bot.edit_message_text(
-            chat_id=chat_id,
-            message_id=call.message.message_id,
-            text=f"اختر عرض الدول لخدمة ({service_name}):",
-            reply_markup=markup
-        )
+        # الانتقال لعرض الصفحة الأولى (الصفحة رقم 0) من الدول الـ 12
+        show_countries_page(chat_id, call.message.message_id, service_code, page=0)
 
-    elif data.startswith("countries_"):
-        service_code = data.split("_")[1]
-        bot.answer_callback_query(call.id, "جاري جلب الدول المتاحة...")
+    elif data.startswith("cpage_"):
+        parts = data.split("_")
+        service_code = parts[1]
+        page = int(parts[2])
+        show_countries_page(chat_id, call.message.message_id, service_code, page=page)
+
+    elif data.startswith("select_country_"):
+        parts = data.split("_")
+        service_code = parts[2]
+        country_id = parts[3]
+        country_eng_name = parts[4]
+        
+        bot.answer_callback_query(call.id, "جاري جلب أسعار والمخزون والسيرفرات...")
 
         user_key = USER_API_KEYS[chat_id]
+        params = {
+            'api_key': user_key,
+            'action': 'getTopCountriesByService',
+            'service': service_code
+        }
         
         try:
-            countries_res = requests.get(API_URL, params={'api_key': user_key, 'action': 'getCountries'}, timeout=10)
-            countries_data = countries_res.json()
+            response = requests.get(API_URL, params=params, timeout=10)
+            data_json = response.json()
             
-            markup = types.InlineKeyboardMarkup(row_width=2)
+            # البحث عن السيرفرات الخاصة بالدولة بالاسم الإنجليزي أو المعرف
+            servers = data_json.get(country_eng_name, {})
+            if not servers and isinstance(data_json, dict):
+                for dk, dv in data_json.items():
+                    if country_eng_name.lower() in dk.lower() or dk.lower() in country_eng_name.lower():
+                        servers = dv
+                        break
+
+            markup = types.InlineKeyboardMarkup(row_width=1)
             
-            # معالجة استجابة الدول سواء كانت Dictionary أو List لضمان جلب الـ id الصحيح
-            items_iter = []
-            if isinstance(countries_data, dict):
-                items_iter = countries_data.items()
-            elif isinstance(countries_data, list):
-                items_iter = [(str(idx), item) for idx, item in enumerate(countries_data)]
-
-            if len(items_iter) > 0:
-                for k, v in items_iter:
-                    c_id = str(k)
-                    c_name = str(k)
-                    
-                    if isinstance(v, dict):
-                        # استخراج الـ id الحقيقي والاسم الإنجليزي وفقاً لوثائق الموقع
-                        c_id = str(v.get("id", k))
-                        c_name = str(v.get("eng", v.get("rus", k)))
-                    elif isinstance(v, (str, int)):
-                        c_id = str(v)
-                        c_name = str(k)
-
-                    markup.add(types.InlineKeyboardButton(f"🌍 {c_name.capitalize()}", callback_data=f"buy_{service_code}_{c_id}_0"))
+            if isinstance(servers, dict) and len(servers) > 0:
+                for provider_id, info in servers.items():
+                    if isinstance(info, dict):
+                        price = info.get("price", "N/A")
+                        count = info.get("count", "N/A")
+                        button_text = f"🌐 سيرفر #{provider_id} | المخزون: {count} | السعر: {price} $"
+                        markup.add(types.InlineKeyboardButton(button_text, callback_data=f"buy_{service_code}_{country_id}_{provider_id}"))
             else:
-                bot.answer_callback_query(call.id, "لا توجد دول متاحة حالياً.", show_alert=True)
-                return
+                # خيار الشراء المباشر في حال لم تتوفر تفاصيل السيرفرات مفصلة للمزودين
+                markup.add(types.InlineKeyboardButton("🚀 شراء مباشر (سيرفر افتراضي)", callback_data=f"buy_{service_code}_{country_id}_0"))
 
-            btn_back = types.InlineKeyboardButton("🔙 رجوع", callback_data=f"service_{service_code}")
+            btn_back = types.InlineKeyboardButton("🔙 رجوع للقائمة", callback_data=f"service_{service_code}")
             markup.add(btn_back)
 
             bot.edit_message_text(
                 chat_id=chat_id,
                 message_id=call.message.message_id,
-                text="اختر الدولة المطلوبة للشراء المباشر:",
+                text=f"📊 **سيرفرات وأسعار ومخزون الدولة:**\nاختر السيرفر المناسب للشراء:",
+                parse_mode="Markdown",
                 reply_markup=markup
             )
         except Exception:
-            bot.answer_callback_query(call.id, "حدث خطأ في جلب الدول، حاول مجدداً.", show_alert=True)
+            bot.answer_callback_query(call.id, "حدث خطأ في جلب بيانات السيرفرات.", show_alert=True)
 
     elif data.startswith("buy_"):
         parts = data.split("_")
@@ -234,10 +249,79 @@ def handle_callbacks(call):
         
         user_key = USER_API_KEYS[chat_id]
         
-        # تمرير المعرّف الرقمي الصحيح للدولة بعيداً عن أي أخطاء نصية
         buy_params = {
             'api_key': user_key,
             'action': 'getNumber',
             'service': service,
             'country': country_numeric_id,
-            'providerIds': provider_
+            'providerIds': provider_id
+        }
+        res = requests.get(API_URL, params=buy_params)
+        
+        if "ACCESS_NUMBER" in res.text:
+            res_parts = res.text.split(":")
+            activation_id = res_parts[1]
+            phone = res_parts[2] if len(res_parts) > 2 else "متاح"
+            
+            markup = types.InlineKeyboardMarkup(row_width=1)
+            btn_cancel = types.InlineKeyboardButton("❌ إلغاء الرقم واسترداد الرصيد", callback_data=f"cancel_{activation_id}")
+            markup.add(btn_cancel)
+
+            bot.send_message(
+                chat_id,
+                f"✅ **تم شراء الرقم بنجاح!**\n\n"
+                f"📱 **الرقم:** `{phone}`\n"
+                f"🆔 **معرف التفعيل:** `{activation_id}`\n\n"
+                f"🔄 **جاري مراقبة وصول كود الـ SMS تلقائياً...** سيتم إرساله هنا فور وصوله.",
+                parse_mode="Markdown",
+                reply_markup=markup
+            )
+
+            t = threading.Thread(target=auto_check_sms, args=(chat_id, user_key, activation_id, phone))
+            t.daemon = True
+            t.start()
+
+        else:
+            bot.send_message(chat_id, f"❌ تعذر شراء الرقم. السبب: {res.text}")
+
+    elif data.startswith("cancel_"):
+        activation_id = data.split("_")[1]
+        bot.answer_callback_query(call.id, "جاري إلغاء الرقم...")
+
+        params = {
+            'api_key': USER_API_KEYS[chat_id],
+            'action': 'setStatus',
+            'status': 8,
+            'id': activation_id
+        }
+        res = requests.get(API_URL, params=params)
+        status_text = res.text.strip()
+
+        if "ACCESS_CANCEL" in status_text or "ACCESS_OK" in status_text:
+            bot.edit_message_text(
+                chat_id=chat_id,
+                message_id=call.message.message_id,
+                text=f"🚫 **تم إلغاء الرقم بنجاح وإعادة رصيدك للحساب!**\n🆔 المعرف: `{activation_id}`",
+                parse_mode="Markdown"
+            )
+        else:
+            bot.send_message(
+                chat_id,
+                f"⚠️ لا يمكن إلغاء الرقم حالياً (قد يكون مر وقت طويل أو وصل الكود بالفعل).\nالاستجابة: {status_text}"
+            )
+
+# دالة لعرض الدول بصفحات (كل صفحة تحتوي على 6 دول مع أزرار التالي والسابق)
+def show_countries_page(chat_id, message_id, service_code, page=0):
+    items_per_page = 6
+    total_countries = len(POPULAR_COUNTRIES)
+    start_idx = page * items_per_page
+    end_idx = start_idx + items_per_page
+    
+    page_countries = POPULAR_COUNTRIES[start_idx:end_idx]
+    
+    markup = types.InlineKeyboardMarkup(row_width=2)
+    
+    # إضافة أزرار الدول بنظام صفين
+    row_buttons = []
+    for c in page_countries:
+        row_buttons.append(types.InlineKeyboardButton(c["name"], callback_data=
