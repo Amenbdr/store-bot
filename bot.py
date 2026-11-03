@@ -29,7 +29,7 @@ bot = TeleBot(TELEGRAM_BOT_TOKEN)
 USER_API_KEYS = {}
 USER_STATES = {}
 
-# دالة الفحص التلقائي لوصول الكود في الخلفية
+# دالة الفحص التلقائي لوصول الكود مطابقة لتوثيق getStatus الجديد
 def auto_check_sms(chat_id, api_key, activation_id, phone):
     max_attempts = 60  
     attempt = 0
@@ -47,21 +47,26 @@ def auto_check_sms(chat_id, api_key, activation_id, phone):
             res = requests.get(API_URL, params=params, timeout=10)
             status_text = res.text.strip()
 
-            if "STATUS_OK" in status_text or ":" in status_text:
+            if "STATUS_CANCEL" in status_text:
+                bot.send_message(chat_id, f"❌ تم إلغاء التفعيل للرقم `{phone}`.", parse_mode="Markdown")
+                return
+            
+            elif "STATUS_WAIT_RETRY" in status_text or "STATUS_WAIT_CODE" in status_text:
+                # لا زالت تنتظر الكود، تستمر الحلقة
+                continue
+
+            elif ":" in status_text or len(status_text) > 0:
+                # استلام رمز التفعيل الناجح حسب توثيق الموقع
                 parts = status_text.split(":")
                 code = parts[-1] if len(parts) > 1 else status_text
 
-                if code != "STATUS_OK" and code != "STATUS_WAIT_CODE":
+                if "NO_ACTIVATION" not in code and "BAD_KEY" not in code:
                     bot.send_message(
                         chat_id,
                         f"🎉 **لقد وصل رمز التفعيل للرقم `{phone}`!**\n\n🔑 **الرمز:** `{code}`",
                         parse_mode="Markdown"
                     )
                     return
-            
-            elif "STATUS_CANCEL" in status_text:
-                bot.send_message(chat_id, f"❌ تم إلغاء الرقم `{phone}` مسبقاً.", parse_mode="Markdown")
-                return
                 
         except Exception:
             pass
@@ -177,20 +182,31 @@ def handle_callbacks(call):
         bot.answer_callback_query(call.id, "جاري جلب الدول المتاحة...")
 
         user_key = USER_API_KEYS[chat_id]
-        params = {
-            'api_key': user_key,
-            'action': 'getTopCountriesByService',
-            'service': service_code
-        }
         
         try:
+            countries_res = requests.get(API_URL, params={'api_key': user_key, 'action': 'getCountries'}, timeout=10)
+            countries_json = countries_res.json()
+            
+            params = {
+                'api_key': user_key,
+                'action': 'getTopCountriesByService',
+                'service': service_code
+            }
             response = requests.get(API_URL, params=params, timeout=10)
             data_json = response.json()
 
             markup = types.InlineKeyboardMarkup(row_width=2)
             if isinstance(data_json, dict):
                 for country_name in data_json.keys():
-                    markup.add(types.InlineKeyboardButton(f"🌍 {country_name.capitalize()}", callback_data=f"select_country_{service_code}_{country_name}"))
+                    country_numeric_id = country_name
+                    if isinstance(countries_json, dict):
+                        for k, v in countries_json.items():
+                            if isinstance(v, dict):
+                                if country_name.lower() in str(v.get("eng", "")).lower() or country_name.lower() in str(v.get("rus", "")).lower() or k.lower() == country_name.lower():
+                                    country_numeric_id = str(v.get("id", k))
+                                    break
+
+                    markup.add(types.InlineKeyboardButton(f"🌍 {country_name.capitalize()}", callback_data=f"select_country_{service_code}_{country_numeric_id}_{country_name}"))
 
             btn_back = types.InlineKeyboardButton("🔙 رجوع", callback_data="main_menu")
             markup.add(btn_back)
@@ -207,7 +223,8 @@ def handle_callbacks(call):
     elif data.startswith("select_country_"):
         parts = data.split("_")
         service_code = parts[2]
-        country_name = "_".join(parts[3:])
+        country_numeric_id = parts[3]
+        country_name = "_".join(parts[4:])
         
         bot.answer_callback_query(call.id, "جاري جلب السيرفرات...")
 
@@ -231,7 +248,7 @@ def handle_callbacks(call):
                         price = info.get("price", "N/A")
                         count = info.get("count", "N/A")
                         button_text = f"سيرفر #{provider_id} | الكمية: {count} | السعر: {price} $"
-                        markup.add(types.InlineKeyboardButton(button_text, callback_data=f"buy_{service_code}_{country_name}_{provider_id}"))
+                        markup.add(types.InlineKeyboardButton(button_text, callback_data=f"buy_{service_code}_{country_numeric_id}_{provider_id}"))
 
             if len(markup.keyboard) == 0:
                 bot.send_message(chat_id, "⚠️ لا توجد سيرفرات نشطة لهذه الدولة حالياً.")
@@ -249,33 +266,22 @@ def handle_callbacks(call):
     elif data.startswith("buy_"):
         parts = data.split("_")
         service = parts[1]
-        provider_id = parts[-1]
-        country_name = "_".join(parts[2:-1])
+        country_numeric_id = parts[2]
+        provider_id = parts[3]
         
         bot.answer_callback_query(call.id, "جاري طلب الرقم...")
         
         user_key = USER_API_KEYS[chat_id]
         
-        # محاولة طلب الرقم باستخدام اسم الدولة واسم الخدمة وسيرفر المزود
         buy_params = {
             'api_key': user_key,
             'action': 'getNumber',
             'service': service,
-            'country': country_name,
+            'country': country_numeric_id,
             'providerIds': provider_id
         }
         res = requests.get(API_URL, params=buy_params)
         
-        # إذا ظهر خطأ WRONG_COUNTRY نجرب إرسال المعرف بدون اسم الدولة أو باستخدام كود بديل
-        if "WRONG_COUNTRY" in res.text:
-            buy_params_alt = {
-                'api_key': user_key,
-                'action': 'getNumber',
-                'service': service,
-                'providerIds': provider_id
-            }
-            res = requests.get(API_URL, params=buy_params_alt)
-
         if "ACCESS_NUMBER" in res.text:
             res_parts = res.text.split(":")
             activation_id = res_parts[1]
