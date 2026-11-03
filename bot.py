@@ -29,14 +29,13 @@ bot = TeleBot(TELEGRAM_BOT_TOKEN)
 USER_API_KEYS = {}
 USER_STATES = {}
 
-# ربط الرموز المختصرة بالأسماء التي يعيدها الموقع للبحث الصحيح
 COUNTRIES = {
-    "sa": {"name": "السعودية", "flag": "🇸🇦", "query": "saudi"},
-    "eg": {"name": "مصر", "flag": "🇪🇬", "query": "egypt"},
-    "ae": {"name": "الإمارات", "flag": "🇦🇪", "query": "emirates"},
-    "usa": {"name": "أمريكا", "flag": "🇺🇸", "query": "united-states"},
-    "ru": {"name": "روسيا", "flag": "🇷🇺", "query": "russia"},
-    "uk": {"name": "بريطانيا", "flag": "🇬🇧", "query": "kingdom"}
+    "sa": {"name": "السعودية", "flag": "🇸🇦", "id": "sa"},
+    "eg": {"name": "مصر", "flag": "🇪🇬", "id": "eg"},
+    "ae": {"name": "الإمارات", "flag": "🇦🇪", "id": "ae"},
+    "usa": {"name": "أمريكا", "flag": "🇺🇸", "id": "us"},
+    "ru": {"name": "روسيا", "flag": "🇷🇺", "id": "ru"},
+    "uk": {"name": "بريطانيا", "flag": "🇬🇧", "id": "uk"}
 }
 
 # دالة الفحص التلقائي لوصول الكود في الخلفية
@@ -167,7 +166,7 @@ def handle_callbacks(call):
         
         markup = types.InlineKeyboardMarkup(row_width=2)
         for key, c in COUNTRIES.items():
-            btn_text = c['name']
+            btn_text = f"{c['flag']} {c['name']}"
             markup.add(types.InlineKeyboardButton(btn_text, callback_data=f"select_{service_code}_{key}"))
         
         btn_back = types.InlineKeyboardButton("🔙 رجوع للقائمة", callback_data="back_to_services")
@@ -195,11 +194,10 @@ def handle_callbacks(call):
             data_json = response.json()
             
             target_country_data = {}
-            query_term = COUNTRIES.get(country_key, {}).get("query", country_key)
+            query_term = COUNTRIES.get(country_key, {}).get("name", "").lower()
             
-            # البحث عن الدولة بمرونة بناءً على النص الجزئي
             for api_country_name, servers_dict in data_json.items():
-                if query_term in api_country_name.lower():
+                if query_term in api_country_name.lower() or country_key in api_country_name.lower():
                     target_country_data = servers_dict
                     break
             
@@ -219,7 +217,7 @@ def handle_callbacks(call):
                     price = info.get("price", "N/A")
                     count = info.get("count", "N/A")
                     button_text = f"سيرفر #{provider_id} | الكمية: {count} | السعر: {price} $"
-                    # نمرر رمز الدولة المختصر الأصلي (مثل sa) لضمان نجاح الشراء
+                    # تمرير مفتاح الدولة المختصر الصحيح (مثل sa)
                     markup.add(types.InlineKeyboardButton(button_text, callback_data=f"buy_{service_code}_{country_key}_{provider_id}"))
 
             if len(markup.keyboard) == 0:
@@ -229,7 +227,7 @@ def handle_callbacks(call):
             country_info = COUNTRIES.get(country_key, {"name": country_key})
             bot.send_message(
                 chat_id,
-                f"إليك السيرفرات المتاحة لدولة {country_info['name']}:\nاختر السيرفر للشراء:",
+                f"إليك السيرفرات المتاحة لدولة {country_info.get('name', country_key)}:\nاختر السيرفر للشراء:",
                 reply_markup=markup
             )
         except Exception as e:
@@ -244,13 +242,14 @@ def handle_callbacks(call):
         bot.answer_callback_query(call.id, "جاري طلب الرقم...")
         
         user_key = USER_API_KEYS[chat_id]
+        country_id_val = COUNTRIES.get(country_key, {}).get("id", country_key)
         
-        # استخدام رمز الدولة المختصر أو اسم الدولة الذي يقبله الموقع تماماً
+        # تمرير المعرف المعتمد لدولة الشراء
         buy_params = {
             'api_key': user_key,
             'action': 'getNumber',
             'service': service,
-            'country': country_key,
+            'country': country_id_val,
             'providerIds': provider_id
         }
         res = requests.get(API_URL, params=buy_params)
