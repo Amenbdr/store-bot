@@ -37,7 +37,7 @@ COUNTRY_FLAGS = {
     "canada": "🇨🇦 كندا", "indonesia": "🇮🇩 إندونيسيا", "malaysia": "🇲🇾 ماليزيا",
     "kenya": "🇰🇪 كينيا", "vietnam": "🇻🇳 فيتنام", "kyrgyzstan": "🇰🇬 قيرغيزستان",
     "uk": "🇬🇧 بريطانيا", "poland": "🇵🇱 بولندا", "france": "🇫🇷 فرنسا",
-    "egypt": "🇪🇬 مصر", "india": "🇮 الهند", "pakistan": "🇵🇰 باكستان",
+    "egypt": "🇪🇬 مصر", "india": "🇮🇳 الهند", "pakistan": "🇵🇰 باكستان",
     "brazil": "🇧🇷 البرازيل", "bangladesh": "🇧🇩 بنجلاديش", "ethiopia": "🇪🇹 إثيوبيا",
     "nigeria": "🇳🇬 نيجيريا", "tanzania": "🇹🇿 تنزانيا", "south africa": "🇿🇦 جنوب أفريقيا"
 }
@@ -219,7 +219,7 @@ def handle_callbacks(call):
             else:
                 markup.add(types.InlineKeyboardButton("🚀 شراء مباشر من السيرفر المتاح", callback_data=f"buy_{service_code}_{country_id}_0"))
 
-            btn_back = types.InlineKeyboardButton("🔙 رجوع لقائمة الدول", callback_data=f"service_{service_code}")
+            btn_back = types.InlineKeyboardButton("🔙 رجوع للقائمة الدول", callback_data=f"service_{service_code}")
             markup.add(btn_back)
 
             bot.edit_message_text(
@@ -251,7 +251,6 @@ def handle_callbacks(call):
         
         user_key = USER_API_KEYS[chat_id]
         
-        # تمرير الـ ID الرقمي الصحيح المعتمَد حصرياً للدولة لمنع تداخل الأرقام
         buy_params = {
             'api_key': user_key,
             'action': 'getNumber',
@@ -316,7 +315,6 @@ def handle_callbacks(call):
                 f"⚠️ لا يمكن إلغاء الرقم حالياً (قد يكون مر وقت طويل أو وصل الكود بالفعل).\nالاستجابة: {status_text}"
             )
 
-# دالة لجلب وترتيب جميع الدول من دالة getCountries بشكل كامل بدون نقص
 def load_and_show_countries(chat_id, message_id, service_code, page=0):
     user_key = USER_API_KEYS.get(chat_id)
     try:
@@ -330,7 +328,6 @@ def load_and_show_countries(chat_id, message_id, service_code, page=0):
                     c_id = str(v.get("id", k))
                     eng_name = str(v.get("eng", k)).lower()
                     
-                    # جلب الاسم العربي والعلم إذا توفر، وإلا اسم الموقع
                     display_name = COUNTRY_FLAGS.get(eng_name, f"🌐 {eng_name.capitalize()}")
                     parsed_countries.append({"id": c_id, "name": display_name, "raw": eng_name})
 
@@ -339,4 +336,62 @@ def load_and_show_countries(chat_id, message_id, service_code, page=0):
     except Exception:
         bot.send_message(chat_id, "❌ حدث خطأ أثناء جلب قائمة الدول كاملة من الموقع.")
 
-# دالة عرض الدول بالصفحات والتنقل الس
+def show_countries_page_cached(chat_id, message_id, service_code, page=0):
+    countries_list = USER_COUNTRIES_CACHE.get(chat_id, [])
+    items_per_page = 8
+    total_items = len(countries_list)
+    
+    start_idx = page * items_per_page
+    end_idx = start_idx + items_per_page
+    
+    page_countries = countries_list[start_idx:end_idx]
+    
+    markup = types.InlineKeyboardMarkup(row_width=2)
+    
+    row_buttons = []
+    for c in page_countries:
+        row_buttons.append(types.InlineKeyboardButton(c["name"], callback_data=f"select_country_{service_code}_{c['id']}_{c['raw']}"))
+    
+    for i in range(0, len(row_buttons), 2):
+        if i + 1 < len(row_buttons):
+            markup.add(row_buttons[i], row_buttons[i+1])
+        else:
+            markup.add(row_buttons[i])
+
+    nav_buttons = []
+    if page > 0:
+        nav_buttons.append(types.InlineKeyboardButton("⬅️ السابق", callback_data=f"cpage_{service_code}_{page-1}"))
+    if end_idx < total_items:
+        nav_buttons.append(types.InlineKeyboardButton("التالي ➡️", callback_data=f"cpage_{service_code}_{page+1}"))
+    
+    if nav_buttons:
+        markup.row(*nav_buttons)
+
+    btn_back = types.InlineKeyboardButton("🔙 رجوع للقائمة الرئيسية", callback_data="back_to_services")
+    markup.add(btn_back)
+
+    service_name = "واتساب" if service_code == "wa" else "تليجرام"
+    total_pages = (total_items + items_per_page - 1) // items_per_page
+    
+    try:
+        bot.edit_message_text(
+            chat_id=chat_id,
+            message_id=message_id,
+            text=f"🌍 **قائمة الدول المتاحة لخدمة ({service_name})**\n📄 الصفحة ({page+1} من {total_pages}):",
+            parse_mode="Markdown",
+            reply_markup=markup
+        )
+    except Exception:
+        pass
+
+if __name__ == "__main__":
+    keep_alive()
+    print("🤖 البوت يعمل الآن بسلاسة تامة...")
+    
+    # حلقة حماية آمنة لإعادة تشغيل الاتصال في حال حدوث أي انقطاع مفاجئ
+    while True:
+        try:
+            bot.infinity_polling(timeout=60, long_polling_timeout=60)
+        except Exception as e:
+            print(f"⚠️ حدث خطأ في الاتصال: {e}")
+            time.sleep(5)
