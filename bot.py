@@ -202,8 +202,11 @@ def handle_callbacks(call):
             
             servers = {}
             if isinstance(data_json, dict):
+                # البحث بمرونة فائقة (مطابقة جزئية أو عبر الـ ID أو اسم الدولة)
                 for dk, dv in data_json.items():
-                    if str(dk).lower() == country_raw_name.lower() or country_raw_name.lower() in str(dk).lower():
+                    if (str(dk).lower() == country_raw_name.lower() or 
+                        country_raw_name.lower() in str(dk).lower() or 
+                        str(dk) == str(country_id)):
                         servers = dv
                         break
 
@@ -216,10 +219,11 @@ def handle_callbacks(call):
                         count = info.get("count", "0")
                         button_text = f"🌐 سيرفر #{provider_id} | المخزون: {count} | السعر: {price} $"
                         markup.add(types.InlineKeyboardButton(button_text, callback_data=f"buy_{service_code}_{country_id}_{provider_id}"))
-            else:
-                markup.add(types.InlineKeyboardButton("🚀 شراء مباشر من السيرفر المتاح", callback_data=f"buy_{service_code}_{country_id}_0"))
+            
+            # زر إضافي دائماً للشراء المباشر في حال لم تتوفر تفاصيل مزودين فرعية
+            markup.add(types.InlineKeyboardButton("🚀 شراء مباشر من السيرفر المتاح", callback_data=f"buy_{service_code}_{country_id}_0"))
 
-            btn_back = types.InlineKeyboardButton("🔙 رجوع للقائمة الدول", callback_data=f"service_{service_code}")
+            btn_back = types.InlineKeyboardButton("🔙 رجوع لقائمة الدول", callback_data=f"service_{service_code}")
             markup.add(btn_back)
 
             bot.edit_message_text(
@@ -237,7 +241,7 @@ def handle_callbacks(call):
             bot.edit_message_text(
                 chat_id=chat_id,
                 message_id=call.message.message_id,
-                text="⚠️ تعذر جلب السيرفرات التفصيلية، يمكنك المتابعة بالشراء المباشر للدولة المحددة:",
+                text="⚠️ تعذر جلب السيرفرات التفصيلية لهذه الدولة، يمكنك المتابعة بالشراء المباشر:",
                 reply_markup=markup
             )
 
@@ -388,7 +392,6 @@ if __name__ == "__main__":
     keep_alive()
     print("🤖 البوت يعمل الآن بسلاسة تامة...")
     
-    # حلقة حماية آمنة لإعادة تشغيل الاتصال في حال حدوث أي انقطاع مفاجئ
     while True:
         try:
             bot.infinity_polling(timeout=60, long_polling_timeout=60)
