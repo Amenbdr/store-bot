@@ -29,7 +29,7 @@ bot = TeleBot(TELEGRAM_BOT_TOKEN)
 USER_API_KEYS = {}
 USER_STATES = {}
 
-# دالة الفحص التلقائي لوصول الكود في الخلفية
+# دالة الفحص التلقائي لوصول الكود في الخلفية (محدثة لضمان التقاط الكود بدقة)
 def auto_check_sms(chat_id, api_key, activation_id, phone):
     max_attempts = 60  
     attempt = 0
@@ -47,20 +47,28 @@ def auto_check_sms(chat_id, api_key, activation_id, phone):
             res = requests.get(API_URL, params=params, timeout=10)
             status_text = res.text.strip()
 
-            if "STATUS_OK" in status_text:
-                code = status_text.split(":")[-1]
-                bot.send_message(
-                    chat_id,
-                    f"🎉 **لقد وصل رمز التفعيل للرقم `{phone}`!**\n\n🔑 **الرمز:** `{code}`",
-                    parse_mode="Markdown"
-                )
-                return
+            # طباعة الاستجابة في السجلات للمتابعة
+            print(f"CHECK STATUS RES: {status_text} FOR ID: {activation_id}")
+
+            if "STATUS_OK" in status_text or ":" in status_text:
+                # إذا عادت الاستجابة بالكود (مثل STATUS_OK:123456 أو كود مباشر)
+                parts = status_text.split(":")
+                code = parts[-1] if len(parts) > 1 else status_text
+
+                if code != "STATUS_OK" and code != "STATUS_WAIT_CODE":
+                    bot.send_message(
+                        chat_id,
+                        f"🎉 **لقد وصل رمز التفعيل للرقم `{phone}`!**\n\n🔑 **الرمز:** `{code}`",
+                        parse_mode="Markdown"
+                    )
+                    return
             
             elif "STATUS_CANCEL" in status_text:
                 bot.send_message(chat_id, f"❌ تم إلغاء الرقم `{phone}` مسبقاً.", parse_mode="Markdown")
                 return
                 
-        except Exception:
+        except Exception as e:
+            print(f"Error in auto_check: {e}")
             pass
 
     bot.send_message(
@@ -156,7 +164,6 @@ def handle_callbacks(call):
         service_name = "واتساب" if service_code == "wa" else "تليجرام"
         
         markup = types.InlineKeyboardMarkup(row_width=2)
-        # خيار لجلب جميع الدول المتاحة من الموقع مباشرة
         btn_all = types.InlineKeyboardButton("🌐 عرض جميع الدول المتاحة", callback_data=f"countries_{service_code}")
         markup.add(btn_all)
         
@@ -188,7 +195,6 @@ def handle_callbacks(call):
             markup = types.InlineKeyboardMarkup(row_width=2)
             if isinstance(data_json, dict):
                 for country_name in data_json.keys():
-                    # إضافة زر لكل دولة يتم جلبها من الموقع مباشرة
                     markup.add(types.InlineKeyboardButton(f"🌍 {country_name.capitalize()}", callback_data=f"select_country_{service_code}_{country_name}"))
 
             btn_back = types.InlineKeyboardButton("🔙 رجوع", callback_data="main_menu")
@@ -255,7 +261,6 @@ def handle_callbacks(call):
         
         user_key = USER_API_KEYS[chat_id]
         
-        # إرسال طلب الشراء بالاسم الحقيقي المباشر للدولة كما يستقبله الموقع
         buy_params = {
             'api_key': user_key,
             'action': 'getNumber',
