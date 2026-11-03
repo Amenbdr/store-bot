@@ -4,7 +4,8 @@ import requests
 from telebot import TeleBot, types
 
 # ==================== الإعدادات الأساسية ====================
-TELEGRAM_BOT_TOKEN = "5418318795:AAG3lt5CD7OYl4kgCNkReX5r7CwSy8ljZ0I"  BotFather
+TELEGRAM_BOT_TOKEN = "5418318795:AAG31t5CD7OY14kgCNkRex5r7CwSy81jZOI"  # التوكن من BotFather
+
 API_URL = "https://smsbower.app/stubs/handler_api.php"
 # ==========================================================
 
