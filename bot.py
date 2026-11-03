@@ -202,6 +202,7 @@ def handle_callbacks(call):
             
             servers = {}
             if isinstance(data_json, dict):
+                # البحث الذكي عن سيرفرات الدولة المطابقة بالاسم أو الـ ID
                 for dk, dv in data_json.items():
                     if (str(dk).lower() == country_raw_name.lower() or 
                         country_raw_name.lower() in str(dk).lower() or 
@@ -221,13 +222,14 @@ def handle_callbacks(call):
                         markup.add(types.InlineKeyboardButton(button_text, callback_data=f"buy_{service_code}_{country_id}_{provider_id}"))
                         has_servers = True
 
-            markup.add(types.InlineKeyboardButton("🚀 شراء مباشر من هذه الدولة", callback_data=f"buy_{service_code}_{country_id}_0"))
-            btn_back = types.InlineKeyboardButton("🔙 رجوع للقائمة الدول", callback_data=f"service_{service_code}")
+            # زر الشراء المباشر كخيار دائم لا يخطئ
+            markup.add(types.InlineKeyboardButton("🚀 شراء مباشر من الدولة", callback_data=f"buy_{service_code}_{country_id}_0"))
+            btn_back = types.InlineKeyboardButton("🔙 رجوع لقائمة الدول", callback_data=f"service_{service_code}")
             markup.add(btn_back)
 
-            text_msg = f"📊 **خيارات الشراء للدولة (ID: {country_id}):**\n"
+            text_msg = f"📊 **سيرفرات وأسعار ومخزون الدولة (ID: {country_id}):**\n"
             if not has_servers:
-                text_msg += "اختر الشراء المباشر أدناه:"
+                text_msg += "⚠️ لا توجد تفاصيل مزودين مفصلة لهذه الدولة حالياً، يمكنك استخدام الشراء المباشر أدناه:"
             else:
                 text_msg += "اختر السيرفر المناسب للشراء:"
 
@@ -246,7 +248,7 @@ def handle_callbacks(call):
             bot.edit_message_text(
                 chat_id=chat_id,
                 message_id=call.message.message_id,
-                text="🚀 **خيارات الدولة:**\nيمكنك المتابعة بالشراء المباشر:",
+                text="📊 **خيارات الشراء للدولة:**\nيمكنك المتابعة بالشراء المباشر:",
                 parse_mode="Markdown",
                 reply_markup=markup
             )
@@ -261,4 +263,25 @@ def handle_callbacks(call):
         
         user_key = USER_API_KEYS[chat_id]
         
-        buy
+        buy_params = {
+            'api_key': user_key,
+            'action': 'getNumber',
+            'service': service,
+            'country': country_numeric_id
+        }
+        if provider_id != "0":
+            buy_params['providerIds'] = provider_id
+
+        res = requests.get(API_URL, params=buy_params)
+        
+        if "ACCESS_NUMBER" in res.text:
+            res_parts = res.text.split(":")
+            activation_id = res_parts[1]
+            phone = res_parts[2] if len(res_parts) > 2 else "متاح"
+            
+            markup = types.InlineKeyboardMarkup(row_width=1)
+            btn_cancel = types.InlineKeyboardButton("❌ إلغاء الرقم واسترداد الرصيد", callback_data=f"cancel_{activation_id}")
+            markup.add(btn_cancel)
+
+            bot.send_message(
+                chat_id,
