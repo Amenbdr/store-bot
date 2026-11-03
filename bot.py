@@ -29,7 +29,7 @@ bot = TeleBot(TELEGRAM_BOT_TOKEN)
 USER_API_KEYS = {}
 USER_STATES = {}
 
-# دالة الفحص التلقائي لوصول الكود في الخلفية مطابقة لتوثيق getStatus
+# دالة الفحص التلقائي السلسة لوصول كود الـ SMS في الخلفية
 def auto_check_sms(chat_id, api_key, activation_id, phone):
     max_attempts = 60  
     attempt = 0
@@ -89,11 +89,11 @@ def send_welcome(message):
     
     bot.reply_to(
         message, 
-        "مرحباً بك في بوت خدمات الأرقام!\n\nيرجى أولاً إدخال مفتاح الـ API الخاص بك من موقع SMSBower للبدء:", 
+        "مرحباً بك في بوت خدمات الأرقام السريع!\n\nيرجى أولاً إدخال مفتاح الـ API الخاص بك من موقع SMSBower للبدء:", 
         reply_markup=markup
     )
 
-# 2. استقبال النصوص (مفتاح الـ API)
+# 2. استقبال مفتاح الـ API
 @bot.message_handler(func=lambda message: USER_STATES.get(message.chat.id) == "waiting_for_api_key")
 def receive_api_key(message):
     chat_id = message.chat.id
@@ -111,9 +111,9 @@ def receive_api_key(message):
         else:
             bot.reply_to(message, "❌ مفتاح الـ API غير صحيح أو منتهي الصلاحية. يرجى إرسال مفتاح صحيح:")
     except Exception:
-        bot.reply_to(message, "❌ حدث خطأ أثناء الاتصال بالموقع للتأكد من المفتاح. حاول لاحقاً.")
+        bot.reply_to(message, "❌ حدث خطأ أثناء الاتصال بالموقع. حاول لاحقاً.")
 
-# 3. معالجة الأزرار التفاعلية
+# 3. معالجة الأزرار التفاعلية بسلاسة
 @bot.callback_query_handler(func=lambda call: True)
 def handle_callbacks(call):
     chat_id = call.message.chat.id
@@ -162,16 +162,16 @@ def handle_callbacks(call):
         service_name = "واتساب" if service_code == "wa" else "تليجرام"
         
         markup = types.InlineKeyboardMarkup(row_width=2)
-        btn_all = types.InlineKeyboardButton("🌐 عرض جميع الدول المتاحة", callback_data=f"countries_{service_code}")
+        btn_all = types.InlineKeyboardButton("🌐 عرض الدول المتاحة", callback_data=f"countries_{service_code}")
         markup.add(btn_all)
         
-        btn_back = types.InlineKeyboardButton("🔙 رجوع للقائمة", callback_data="back_to_services")
+        btn_back = types.InlineKeyboardButton("🔙 رجوع", callback_data="back_to_services")
         markup.add(btn_back)
         
         bot.edit_message_text(
             chat_id=chat_id,
             message_id=call.message.message_id,
-            text=f"اختر طريقة عرض الدول لتطبيق ({service_name}):",
+            text=f"اختر عرض الدول لخدمة ({service_name}):",
             reply_markup=markup
         )
 
@@ -194,7 +194,7 @@ def handle_callbacks(call):
             data_json = response.json()
 
             markup = types.InlineKeyboardMarkup(row_width=2)
-            if isinstance(data_json, dict):
+            if isinstance(data_json, dict) and len(data_json) > 0:
                 for country_name in data_json.keys():
                     country_numeric_id = country_name
                     if isinstance(countries_json, dict):
@@ -205,8 +205,11 @@ def handle_callbacks(call):
                                     break
 
                     markup.add(types.InlineKeyboardButton(f"🌍 {country_name.capitalize()}", callback_data=f"select_country_{service_code}_{country_numeric_id}_{country_name}"))
+            else:
+                bot.answer_callback_query(call.id, "لا توجد دول متاحة لهذه الخدمة حالياً.", show_alert=True)
+                return
 
-            btn_back = types.InlineKeyboardButton("🔙 رجوع", callback_data="main_menu")
+            btn_back = types.InlineKeyboardButton("🔙 رجوع", callback_data=f"service_{service_code}")
             markup.add(btn_back)
 
             bot.edit_message_text(
@@ -216,7 +219,7 @@ def handle_callbacks(call):
                 reply_markup=markup
             )
         except Exception:
-            bot.send_message(chat_id, f"❌ حدث خطأ أثناء جلب قائمة الدول.")
+            bot.answer_callback_query(call.id, "حدث خطأ في الاتصال، حاول مجدداً.", show_alert=True)
 
     elif data.startswith("select_country_"):
         parts = data.split("_")
@@ -240,26 +243,29 @@ def handle_callbacks(call):
             servers = data_json.get(country_name, {})
             markup = types.InlineKeyboardMarkup(row_width=1)
             
-            if isinstance(servers, dict):
+            if isinstance(servers, dict) and len(servers) > 0:
                 for provider_id, info in servers.items():
                     if isinstance(info, dict):
                         price = info.get("price", "N/A")
                         count = info.get("count", "N/A")
                         button_text = f"سيرفر #{provider_id} | الكمية: {count} | السعر: {price} $"
                         markup.add(types.InlineKeyboardButton(button_text, callback_data=f"buy_{service_code}_{country_numeric_id}_{provider_id}"))
-
-            if len(markup.keyboard) == 0:
-                bot.send_message(chat_id, "⚠️ لا توجد سيرفرات نشطة لهذه الدولة حالياً.")
+            else:
+                bot.answer_callback_query(call.id, "لا توجد سيرفرات نشطة لهذه الدولة.", show_alert=True)
                 return
 
-            bot.send_message(
-                chat_id,
-                f"إليك السيرفرات المتاحة لدولة `{country_name}`:\nاختر السيرفر للشراء:",
+            btn_back = types.InlineKeyboardButton("🔙 رجوع", callback_data=f"countries_{service_code}")
+            markup.add(btn_back)
+
+            bot.edit_message_text(
+                chat_id=chat_id,
+                message_id=call.message.message_id,
+                text=f"إليك السيرفرات المتاحة لدولة `{country_name}`:\nاختر السيرفر للشراء:",
                 parse_mode="Markdown",
                 reply_markup=markup
             )
         except Exception:
-            bot.send_message(chat_id, f"❌ حدث خطأ أثناء جلب السيرفرات.")
+            bot.answer_callback_query(call.id, "حدث خطأ في جلب السيرفرات.", show_alert=True)
 
     elif data.startswith("buy_"):
         parts = data.split("_")
@@ -334,5 +340,5 @@ def handle_callbacks(call):
 
 if __name__ == "__main__":
     keep_alive()
-    print("🤖 البوت يعمل الآن بنجاح...")
+    print("🤖 البوت يعمل الآن بسلاسة تامة...")
     bot.infinity_polling()
