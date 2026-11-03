@@ -29,15 +29,6 @@ bot = TeleBot(TELEGRAM_BOT_TOKEN)
 USER_API_KEYS = {}
 USER_STATES = {}
 
-COUNTRIES = {
-    "sa": {"name": "السعودية", "flag": "🇸🇦", "query": "saudi"},
-    "eg": {"name": "مصر", "flag": "🇪🇬", "query": "egypt"},
-    "ae": {"name": "الإمارات", "flag": "🇦🇪", "query": "emirates"},
-    "usa": {"name": "أمريكا", "flag": "🇺🇸", "query": "united-states"},
-    "ru": {"name": "روسيا", "flag": "🇷🇺", "query": "russia"},
-    "uk": {"name": "بريطانيا", "flag": "🇬🇧", "query": "kingdom"}
-}
-
 # دالة الفحص التلقائي لوصول الكود في الخلفية
 def auto_check_sms(chat_id, api_key, activation_id, phone):
     max_attempts = 60  
@@ -165,9 +156,9 @@ def handle_callbacks(call):
         service_name = "واتساب" if service_code == "wa" else "تليجرام"
         
         markup = types.InlineKeyboardMarkup(row_width=2)
-        for key, c in COUNTRIES.items():
-            btn_text = f"{c['flag']} {c['name']}"
-            markup.add(types.InlineKeyboardButton(btn_text, callback_data=f"select_{service_code}_{key}"))
+        # خيار لجلب جميع الدول المتاحة من الموقع مباشرة
+        btn_all = types.InlineKeyboardButton("🌐 عرض جميع الدول المتاحة", callback_data=f"countries_{service_code}")
+        markup.add(btn_all)
         
         btn_back = types.InlineKeyboardButton("🔙 رجوع للقائمة", callback_data="back_to_services")
         markup.add(btn_back)
@@ -175,104 +166,101 @@ def handle_callbacks(call):
         bot.edit_message_text(
             chat_id=chat_id,
             message_id=call.message.message_id,
-            text=f"اختر الدولة لتطبيق ({service_name}):",
+            text=f"اختر طريقة عرض الدول لتطبيق ({service_name}):",
             reply_markup=markup
         )
 
-    elif data.startswith("select_"):
-        _, service_code, country_key = data.split("_")
-        bot.answer_callback_query(call.id, "جاري جلب السيرفرات والـ IDs...")
+    elif data.startswith("countries_"):
+        service_code = data.split("_")[1]
+        bot.answer_callback_query(call.id, "جاري جلب الدول المتاحة...")
 
         user_key = USER_API_KEYS[chat_id]
+        params = {
+            'api_key': user_key,
+            'action': 'getTopCountriesByService',
+            'service': service_code
+        }
         
         try:
-            # 1. جلب قائمة الدول للحصول على الـ ID الرقمي الصحيح لكل دولة بناءً على وثائق الموقع
-            countries_res = requests.get(API_URL, params={'api_key': user_key, 'action': 'getCountries'}, timeout=10)
-            countries_json = countries_res.json()
-            
-            country_numeric_id = ""
-            query_term = COUNTRIES.get(country_key, {}).get("query", country_key)
-            
-            # البحث عن الـ ID الرقمي المناسب للدولة من استجابة getCountries
-            if isinstance(countries_json, dict):
-                for k, v in countries_json.items():
-                    if isinstance(v, dict):
-                        eng_name = str(v.get("eng", "")).lower()
-                        rus_name = str(v.get("rus", "")).lower()
-                        if query_term in eng_name or query_term in rus_name or k.lower() == country_key:
-                            country_numeric_id = str(v.get("id", k))
-                            break
-            
-            if not country_numeric_id:
-                country_numeric_id = country_key # قيمة احتياطية
+            response = requests.get(API_URL, params=params, timeout=10)
+            data_json = response.json()
 
-            # 2. جلب السيرفرات المتاحة للخدمة
-            params = {
-                'api_key': user_key,
-                'action': 'getTopCountriesByService',
-                'service': service_code
-            }
+            markup = types.InlineKeyboardMarkup(row_width=2)
+            if isinstance(data_json, dict):
+                for country_name in data_json.keys():
+                    # إضافة زر لكل دولة يتم جلبها من الموقع مباشرة
+                    markup.add(types.InlineKeyboardButton(f"🌍 {country_name.capitalize()}", callback_data=f"select_country_{service_code}_{country_name}"))
+
+            btn_back = types.InlineKeyboardButton("🔙 رجوع", callback_data="main_menu")
+            markup.add(btn_back)
+
+            bot.edit_message_text(
+                chat_id=chat_id,
+                message_id=call.message.message_id,
+                text="اختر الدولة المطلوبة:",
+                reply_markup=markup
+            )
+        except Exception as e:
+            bot.send_message(chat_id, f"❌ حدث خطأ أثناء جلب قائمة الدول.")
+
+    elif data.startswith("select_country_"):
+        parts = data.split("_")
+        service_code = parts[2]
+        country_name = "_".join(parts[3:])
+        
+        bot.answer_callback_query(call.id, "جاري جلب السيرفرات...")
+
+        user_key = USER_API_KEYS[chat_id]
+        params = {
+            'api_key': user_key,
+            'action': 'getTopCountriesByService',
+            'service': service_code
+        }
+        
+        try:
             response = requests.get(API_URL, params=params, timeout=10)
             data_json = response.json()
             
-            target_country_data = {}
-            matched_api_country = ""
-            
-            for api_country_name, servers_dict in data_json.items():
-                if query_term in api_country_name.lower() or country_key in api_country_name.lower():
-                    target_country_data = servers_dict
-                    matched_api_country = api_country_name
-                    break
-            
-            if not target_country_data:
-                for api_country_name, servers_dict in data_json.items():
-                    if isinstance(servers_dict, dict) and len(servers_dict) > 0:
-                        target_country_data = servers_dict
-                        matched_api_country = api_country_name
-                        break
-
-            if not target_country_data or not isinstance(target_country_data, dict):
-                bot.send_message(chat_id, "⚠️ لا توجد سيرفرات أو أرقام متاحة لهذه الدولة حالياً في الموقع.")
-                return
-
+            servers = data_json.get(country_name, {})
             markup = types.InlineKeyboardMarkup(row_width=1)
-            for provider_id, info in target_country_data.items():
-                if isinstance(info, dict):
-                    price = info.get("price", "N/A")
-                    count = info.get("count", "N/A")
-                    button_text = f"سيرفر #{provider_id} | الكمية: {count} | السعر: {price} $"
-                    # نمرر الـ ID الرقمي الصحيح للدولة مع معرف السيرفر في الـ callback
-                    markup.add(types.InlineKeyboardButton(button_text, callback_data=f"buy_{service_code}_{country_numeric_id}_{provider_id}"))
+            
+            if isinstance(servers, dict):
+                for provider_id, info in servers.items():
+                    if isinstance(info, dict):
+                        price = info.get("price", "N/A")
+                        count = info.get("count", "N/A")
+                        button_text = f"سيرفر #{provider_id} | الكمية: {count} | السعر: {price} $"
+                        markup.add(types.InlineKeyboardButton(button_text, callback_data=f"buy_{service_code}_{country_name}_{provider_id}"))
 
             if len(markup.keyboard) == 0:
                 bot.send_message(chat_id, "⚠️ لا توجد سيرفرات نشطة لهذه الدولة حالياً.")
                 return
 
-            country_info = COUNTRIES.get(country_key, {"name": country_key})
             bot.send_message(
                 chat_id,
-                f"إليك السيرفرات المتاحة لدولة {country_info.get('name', country_key)}:\nاختر السيرفر للشراء:",
+                f"إليك السيرفرات المتاحة لدولة `{country_name}`:\nاختر السيرفر للشراء:",
+                parse_mode="Markdown",
                 reply_markup=markup
             )
         except Exception as e:
-            bot.send_message(chat_id, f"❌ حدث خطأ أثناء جلب البيانات.")
+            bot.send_message(chat_id, f"❌ حدث خطأ أثناء جلب السيرفرات.")
 
     elif data.startswith("buy_"):
         parts = data.split("_")
         service = parts[1]
-        country_id_val = parts[2] # هذا هو الـ ID الرقمي الصحيح الذي تم جلبه من getCountries
-        provider_id = parts[3]
+        provider_id = parts[-1]
+        country_name = "_".join(parts[2:-1])
         
         bot.answer_callback_query(call.id, "جاري طلب الرقم...")
         
         user_key = USER_API_KEYS[chat_id]
         
-        # إرسال طلب الشراء بالمعرف الرقمي الصحيح للدولة والسيرفر
+        # إرسال طلب الشراء بالاسم الحقيقي المباشر للدولة كما يستقبله الموقع
         buy_params = {
             'api_key': user_key,
             'action': 'getNumber',
             'service': service,
-            'country': country_id_val,
+            'country': country_name,
             'providerIds': provider_id
         }
         res = requests.get(API_URL, params=buy_params)
