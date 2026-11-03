@@ -2,15 +2,30 @@ import time
 import threading
 import requests
 from telebot import TeleBot, types
+from flask import Flask
 
-# ==================== الإعدادات الأساسية ====================
-TELEGRAM_BOT_TOKEN = "5418318795:AAG3lt5CD7OYl4kgCNkReX5r7CwSy8ljZ0I" # التوكن الجديد الخاص بك
+# ==================== إعدادات سيرفر الويب الوهمي ====================
+app = Flask('')
+
+@app.route('/')
+def home():
+    return "Bot is alive and running!"
+
+def run_web():
+    app.run(host='0.0.0.0', port=8080)
+
+def keep_alive():
+    t = threading.Thread(target=run_web)
+    t.daemon = True
+    t.start()
+# ====================================================================
+
+# ==================== الإعدادات الأساسية للبوت ====================
+TELEGRAM_BOT_TOKEN = "5418318795:AAG3lt5CD7OYl4kgCNkReX5r7CwSy8ljZ0I"
 API_URL = "https://smsbower.app/stubs/handler_api.php"
-# ==========================================================
 
 bot = TeleBot(TELEGRAM_BOT_TOKEN)
 
-# قاموس مؤقت لحفظ مفاتيح الـ API لكل مستخدم
 USER_API_KEYS = {}
 USER_STATES = {}
 
@@ -176,28 +191,46 @@ def handle_callbacks(call):
         
         try:
             response = requests.get(API_URL, params=params, timeout=10)
-            data_json = response.json()
-            country_servers = data_json.get(country_code, {})
             
+            # محاولة طباعة الاستجابة في الـ Logs لمعرفة شكل البيانات بدقة
+            print(f"API Response for {country_code}: {response.text[:200]}...")
+            
+            data_json = response.json()
+            
+            # التحقق مما إذا كانت البيانات مرجعة مباشرة أو داخل مفتاح الدولة
+            country_servers = data_json.get(country_code, {})
+            if not country_servers and isinstance(data_json, dict):
+                # إذا لم تجد المفتاح بالرمز، قد يكون الـ API يعيد هيكلاً مختلفاً، نحاول فحصه
+                country_servers = data_json
+
             if not country_servers:
-                bot.send_message(chat_id, "⚠️ لا توجد سيرفرات أو أرقام متاحة لهذه الدولة حالياً.")
+                bot.send_message(chat_id, "⚠️ لا توجد سيرفرات أو أرقام متاحة لهذه الدولة حالياً من الموقع.")
                 return
 
             markup = types.InlineKeyboardMarkup(row_width=1)
-            for server_id, info in country_servers.items():
-                price = info.get("price", "N/A")
-                count = info.get("count", "N/A")
-                button_text = f"سيرفر #{server_id} | الكمية: {count} | السعر: {price} $"
-                markup.add(types.InlineKeyboardButton(button_text, callback_data=f"buy_{service_code}_{country_code}_{server_id}"))
             
+            # التأكد من أن البيانات عبارة عن قاموس (Servers)
+            if isinstance(country_servers, dict):
+                for server_id, info in country_servers.items():
+                    if isinstance(info, dict):
+                        price = info.get("price", "N/A")
+                        count = info.get("count", "N/A")
+                        button_text = f"سيرفر #{server_id} | الكمية: {count} | السعر: {price} $"
+                        markup.add(types.InlineKeyboardButton(button_text, callback_data=f"buy_{service_code}_{country_code}_{server_id}"))
+            
+            if len(markup.keyboard) == 0:
+                bot.send_message(chat_id, "⚠️ لا توجد سيرفرات صالحة للعرض بهذه الدولة حالياً.")
+                return
+
             country_info = COUNTRIES.get(country_code, {"name": country_code, "flag": "🌐"})
             bot.send_message(
                 chat_id,
                 f"إليك السيرفرات المتاحة لدولة {country_info['flag']} {country_info['name']}:\nاختر السيرفر للشراء:",
                 reply_markup=markup
             )
-        except Exception:
-            bot.send_message(chat_id, "❌ حدث خطأ أثناء الاتصال بالسيرفرات.")
+        except Exception as e:
+            print(f"Error fetching servers: {e}")
+            bot.send_message(chat_id, "❌ حدث خطأ أثناء الاتصال بجلب السيرفرات من الموقع.")
 
     elif data.startswith("buy_"):
         _, service, country, server_id = data.split("_")
@@ -264,5 +297,6 @@ def handle_callbacks(call):
             )
 
 if __name__ == "__main__":
+    keep_alive()
     print("🤖 البوت يعمل الآن بنجاح...")
     bot.infinity_polling()
