@@ -22,7 +22,7 @@ bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher(bot, storage=MemoryStorage())
 
 # ==========================================
-# 🌍 قائمة الدول الشاملة (جميع الدول العربية والأجنبية)
+# 🌍 قائمة الدول الشاملة
 # ==========================================
 COUNTRIES = {
     "0": "🇷🇺 روسيا", "1": "🇺🇦 أوكرانيا", "2": "🇰🇿 كازاخستان", "3": "🇨🇳 الصين",
@@ -152,4 +152,124 @@ def countries_menu(service_id, page=0):
 
 def check_sms_menu(activation_id):
     kb = InlineKeyboardMarkup(row_width=1)
-    kb
+    kb.add(
+        InlineKeyboardButton("🔄 Refresh Code", callback_data=f"check_sms_{activation_id}"),
+        InlineKeyboardButton("❌ Cancel Order", callback_data=f"cancel_{activation_id}")
+    )
+    return kb
+
+# ==========================================
+# 🤖 أوامر البوت الأساسية
+# ==========================================
+@dp.message_handler(commands=['start'], state='*')
+async def start_cmd(message: types.Message, state: FSMContext):
+    await state.finish()
+    await message.answer("Welcome to Virtual Numbers Bot 🚀\nPlease choose service:", reply_markup=main_menu())
+
+@dp.callback_query_handler(lambda c: c.data == 'set_api')
+async def set_api_btn(call: types.CallbackQuery):
+    await call.message.edit_text("Please send your SMSBower API Key:")
+    await UserStates.waiting_for_api.set()
+
+@dp.message_handler(state=UserStates.waiting_for_api)
+async def receive_api_key(message: types.Message, state: FSMContext):
+    api_key = message.text.strip()
+    wait_msg = await message.answer("⏳ Checking API Key...")
+    balance = SmsBower.get_balance(api_key)
+    if balance is not None:
+        save_api_key(message.from_user.id, api_key)
+        await wait_msg.edit_text(f"✅ Success!\n💰 Balance: {balance}\nYou can buy numbers now.", reply_markup=main_menu())
+        await state.finish()
+    else:
+        await wait_msg.edit_text("❌ Invalid API Key! Please try again:")
+
+@dp.callback_query_handler(lambda c: c.data == 'check_balance')
+async def balance_btn(call: types.CallbackQuery):
+    user_api = get_api_key(call.from_user.id)
+    if not user_api: 
+        return await call.answer("⚠️ Please set your API Key first!", show_alert=True)
+    balance = SmsBower.get_balance(user_api)
+    await call.message.edit_text(f"💰 Balance: {balance}" if balance else "❌ Error fetching balance.", reply_markup=main_menu())
+
+@dp.callback_query_handler(lambda c: c.data.startswith('service_'))
+async def select_service(call: types.CallbackQuery):
+    user_api = get_api_key(call.from_user.id)
+    if not user_api: 
+        return await call.answer("⚠️ Please set your API Key first!", show_alert=True)
+    service_id = call.data.split('_')[1]
+    app_name = "WhatsApp" if service_id == "wa" else "Telegram"
+    await call.message.edit_text(f"Select country for {app_name}:\n(Page 1)", reply_markup=countries_menu(service_id, page=0))
+
+@dp.callback_query_handler(lambda c: c.data.startswith('page_'))
+async def process_page(call: types.CallbackQuery):
+    user_api = get_api_key(call.from_user.id)
+    if not user_api: 
+        return await call.answer("⚠️ Please set your API Key first!", show_alert=True)
+    parts = call.data.split('_')
+    service_id, page = parts[1], int(parts[2])
+    app_name = "WhatsApp" if service_id == "wa" else "Telegram"
+    await call.message.edit_text(f"Select country for {app_name}:\n(Page {page + 1})", reply_markup=countries_menu(service_id, page=page))
+
+@dp.callback_query_handler(lambda c: c.data.startswith('cntry_'))
+async def process_country(call: types.CallbackQuery):
+    user_api = get_api_key(call.from_user.id)
+    _, service_id, country_id = call.data.split('_')
+    
+    await call.answer("⏳ Fetching servers...", show_alert=False)
+    prices_data = SmsBower.get_prices(user_api, service_id, country_id)
+    
+    if not prices_data:
+        return await call.answer("❌ No numbers available for this country.", show_alert=True)
+        
+    kb = InlineKeyboardMarkup(row_width=1)
+    for operator, info in prices_data.items():
+        count = info['count']
+        price = info['price']
+        if count > 0:
+            kb.add(InlineKeyboardButton(f"Server {operator.upper()} | Price: {price} | Stock: {count}", callback_data=f"buy_{service_id}_{country_id}_{operator}"))
+            
+    kb.add(InlineKeyboardButton("🔙 Back to Countries", callback_data=f"service_{service_id}"))
+    country_name = COUNTRIES.get(country_id, "Unknown")
+    await call.message.edit_text(f"📊 Servers for {country_name}:\nSelect server:", reply_markup=kb)
+
+@dp.callback_query_handler(lambda c: c.data.startswith('buy_'))
+async def process_buy(call: types.CallbackQuery):
+    user_api = get_api_key(call.from_user.id)
+    _, service_id, country_id, operator = call.data.split('_')
+    
+    await call.answer("⏳ Ordering number...", show_alert=True)
+    order = SmsBower.get_number(user_api, service_id, country_id, operator)
+    
+    if order:
+        text = f"✅ Number Purchased!\n\n📞 Phone: `+{order['number']}`\n\nGet code in app then click refresh."
+        await call.message.edit_text(text, parse_mode="Markdown", reply_markup=check_sms_menu(order['id']))
+    else:
+        await call.answer("❌ Order failed. Check balance or stock.", show_alert=True)
+
+@dp.callback_query_handler(lambda c: c.data.startswith('check_sms_'))
+async def process_check_sms(call: types.CallbackQuery):
+    user_api = get_api_key(call.from_user.id)
+    activation_id = call.data.split('_')[2]
+    status = SmsBower.get_sms(user_api, activation_id)
+    
+    if status == "WAITING":
+        await call.answer("⏳ SMS not received yet...", show_alert=True)
+    elif status:
+        await call.message.edit_text(f"📬 SMS Code Received!\n\nCode: `{status}`", parse_mode="Markdown")
+    else:
+        await call.answer("⚠️ Timeout or cancelled.", show_alert=True)
+
+@dp.callback_query_handler(lambda c: c.data.startswith('cancel_'))
+async def cancel_number(call: types.CallbackQuery):
+    user_api = get_api_key(call.from_user.id)
+    activation_id = call.data.split('_')[1]
+    params = {'api_key': user_api, 'action': 'setStatus', 'status': 8, 'id': activation_id}
+    requests.get(API_URL, params=params)
+    await call.message.edit_text("Number cancelled successfully. ♻️", reply_markup=main_menu())
+
+@dp.callback_query_handler(lambda c: c.data == 'back_main')
+async def back_main_btn(call: types.CallbackQuery):
+    await call.message.edit_text("Main Menu:", reply_markup=main_menu())
+
+# ==========================================
+# 🌐
