@@ -1,28 +1,32 @@
+import os
 import requests
 import logging
 
 logger = logging.getLogger(__name__)
 
 class SMSBowerService:
-    def __init__(self, api_key: str):
-        self.api_key = api_key
+    def __init__(self, api_key: str = None):
+        # سحب المفتاح الجديد تلقائياً من متغيرات البيئة على Render
+        self.api_key = api_key or os.getenv("DEFAULT_SMSBOWER_KEY")
         self.base_url = "https://smsbower.page/stubs/handler_api.php"
         self.payment_url = "https://smsbower.page/api/payment/getActualWalletAddress"
 
     def _get(self, params: dict) -> any:
         """دالة مساعدة لإرسال الطلبات للـ API ومعالجة الأخطاء بأمان"""
+        if not self.api_key:
+            logger.error("SMSBower API Key is missing! Please check Render Environment Variables.")
+            return None
+            
         params['api_key'] = self.api_key
         try:
             response = requests.get(self.base_url, params=params, timeout=15)
             response.raise_for_status()
             
-            # فحص إذا كان الرد نصياً بسيطاً (مثل الأرصدة أو حالات التفعيل)
             text_resp = response.text.strip()
             if text_resp.startswith("BAD_KEY") or text_resp.startswith("BAD_ACTION") or text_resp.startswith("BAD_SERVICE"):
                 logger.error(f"SMSBower API Error Response: {text_resp}")
                 return None
                 
-            # محاولة تحويل الرد إلى JSON إذا كان مدعوماً
             try:
                 return response.json()
             except ValueError:
@@ -78,14 +82,14 @@ class SMSBowerService:
                 "operator": res.get("activationOperator")
             }
             
-        # كآلية احتياطية (Fallback) لو رجع النظام بالشكل النصي القديم getNumber
+        # كبديل احتياطي للنسخة القديمة getNumber
         if isinstance(res, str) and res.startswith("ACCESS_NUMBER:"):
             parts = res.split(":")
             if len(parts) >= 3:
                 return {
                     "activation_id": parts[1],
                     "number": parts[2],
-                    "cost": 0.50,
+                    "cost": 0.0,
                     "operator": "Default"
                 }
         return None
@@ -97,7 +101,7 @@ class SMSBowerService:
             "id": activation_id
         })
         if isinstance(res, str):
-            if res == "STATUS_WAIT_CODE" or res == "WAITING":
+            if res in ["STATUS_WAIT_CODE", "WAITING"]:
                 return "WAITING"
             elif res.startswith("STATUS_OK:"):
                 return res.split(":")[-1]
@@ -107,7 +111,7 @@ class SMSBowerService:
         """إلغاء الرقم واسترداد القيمة"""
         res = self._get({
             "action": "setStatus",
-            "status": 8,  # كود الإلغاء في النظام
+            "status": 8,
             "id": activation_id
         })
         return res == "ACCESS_CANCEL" or (isinstance(res, str) and "CANCEL" in res)
@@ -115,14 +119,12 @@ class SMSBowerService:
     def get_wallet_address(self, coin: str = "usdt", network: str = "tron") -> str:
         """جلب عنوان المحفظة الثابتة للإيداع (getActualWalletAddress)"""
         try:
+            if not self.api_key:
+                return None
             params = {
                 "api_key": self.api_key,
                 "coin": coin,
                 "network": network
             }
             response = requests.get(self.payment_url, params=params, timeout=15)
-            data = response.json()
-            return data.get("wallet_address")
-        except Exception as e:
-            logger.error(f"Failed to get wallet address: {e}")
-            return None
+            data = response.
