@@ -2,7 +2,7 @@
 BOT_TOKEN = "5418318795:AAEB_8T8GjNzNeAi5IQf-krzypUfOCiNZz8"
 
 # التوكن الافتراضي الخاص بخدمة SMSBower
-DEFAULT_SMSBOWER_KEY = "ضع_مفتاح_سيرفر_الارقام_هنا"
+DEFAULT_SMSBOWER_KEY = "Usl5WByEKrl7SixKM9AbYCTSFMXXt8FL"
 
 # معرفات المشرفين
 ADMIN_IDS = [
