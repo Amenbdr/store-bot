@@ -2,9 +2,9 @@ import logging
 import requests
 import sqlite3
 import math
-import asyncio
 import os
-from aiohttp import web
+from threading import Thread
+from flask import Flask
 from aiogram import Bot, Dispatcher, executor, types
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.contrib.fsm_storage.memory import MemoryStorage
@@ -38,7 +38,7 @@ COUNTRIES = {
 }
 
 # ==========================================
-# 🗄️ إعداد قاعدة البيانات (SQLite)
+# 🗄️ قاعدة البيانات
 # ==========================================
 conn = sqlite3.connect('bot_users.db', check_same_thread=False)
 cursor = conn.cursor()
@@ -55,7 +55,7 @@ def get_api_key(user_id):
     return result[0] if result else None
 
 # ==========================================
-# 🛠 كلاس للتعامل مع API موقع SMSBower
+# 🛠 كلاس SMSBower
 # ==========================================
 class SmsBower:
     @staticmethod
@@ -106,7 +106,7 @@ class SmsBower:
             return None
 
 # ==========================================
-# 📱 واجهات البوت وحالات FSM
+# 📱 واجهات البوت
 # ==========================================
 class UserStates(StatesGroup):
     waiting_for_api = State()
@@ -159,7 +159,7 @@ def check_sms_menu(activation_id):
     return kb
 
 # ==========================================
-# 🤖 أوامر البوت الأساسية
+# 🤖 أوامر البوت
 # ==========================================
 @dp.message_handler(commands=['start'], state='*')
 async def start_cmd(message: types.Message, state: FSMContext):
@@ -260,6 +260,15 @@ async def process_check_sms(call: types.CallbackQuery):
         await call.answer("⚠️ Timeout or cancelled.", show_alert=True)
 
 @dp.callback_query_handler(lambda c: c.data.startswith('cancel_'))
+async def cancel_number(call: types.CallbackGroup if hasattr(types, 'CallbackGroup') else types.CallbackQuery):
+    try:
+        call_obj = cancel_number.__globals__['types'].CallbackQuery if 'call' in locals() else None
+    except:
+        pass
+    # نستخدم المتغير بالطريقة السليمة المباشرة
+    pass
+
+@dp.callback_query_handler(lambda c: c.data.startswith('cancel_'))
 async def cancel_number(call: types.CallbackQuery):
     user_api = get_api_key(call.from_user.id)
     activation_id = call.data.split('_')[1]
@@ -272,4 +281,23 @@ async def back_main_btn(call: types.CallbackQuery):
     await call.message.edit_text("Main Menu:", reply_markup=main_menu())
 
 # ==========================================
-# 🌐
+# 🌐 تشغيل خادم Flask الوهمي في الخلفية (لإرضاء Render)
+# ==========================================
+app = Flask(__name__)
+
+@app.route('/')
+def home():
+    return "Bot is active!"
+
+def run_flask():
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host="0.0.0.0", port=port)
+
+if __name__ == '__main__':
+    # تشغيل السيرفر في خلفية منفصلة لكي تراه منصة Render ولا تغلق التطبيق
+    t = Thread(target=run_flask)
+    t.daemon = True
+    t.start()
+    
+    # تشغيل البوت بالطريقة الطبيعية والآمنة Polling
+    executor.start_polling(dp, skip_updates=True)
