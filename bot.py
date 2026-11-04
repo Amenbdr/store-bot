@@ -10,7 +10,7 @@ from aiogram.dispatcher.filters.state import State, StatesGroup
 # ==========================================
 # ⚙️ إعدادات البوت 
 # ==========================================
-BOT_TOKEN = "5418318795:AAG3lt5CD7OYl4kgCNkReX5r7CwSy8ljZ0I"
+BOT_TOKEN = "5418318795:AAEGhzWNHY_X5NHgCzf5goG650FuGtCHSkg"
 API_URL = "https://smsbower.app/stubs/handler_api.php" # الرابط القياسي المعتمد لأغلب لوحات الأرقام
 
 logging.basicConfig(level=logging.INFO)
