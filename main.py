@@ -1,26 +1,40 @@
+import os
 import logging
+from aiohttp import web
 from aiogram import Bot, Dispatcher, executor
-from aiogram.contrib.fsm_storage.memory import MemoryStorage
 from config import BOT_TOKEN
+from database import db
 from handlers.start import register_start_handlers
-from handlers.admin_panel import register_admin_handlers
 from handlers.numbers_panel import register_numbers_handlers
 
-# إعداد السجلات (Logging)
+# إعداد السجلات
 logging.basicConfig(level=logging.INFO)
 
-# تهيئة البوت والتخزين المؤقت
 bot = Bot(token=BOT_TOKEN)
-storage = MemoryStorage()
-dp = Dispatcher(bot, storage=storage)
+dp = Dispatcher(bot)
+
+# تسجيل الهاندلرز (المعاملات)
+register_start_handlers(dp)
+register_numbers_handlers(dp)
+
+# --- خادم ويب وهمي لترضية منصة Render والبقاء مجانياً ---
+async def handle(request):
+    return web.Response(text="Virtual Number Bot is running successfully! 🚀")
+
+async def web_server():
+    app = web.Application()
+    app.add_routes([web.get('/', handle)])
+    runner = web.AppRunner(app)
+    await runner.setup()
+    port = int(os.environ.get("PORT", 8080))
+    site = web.TCPSite(runner, "0.0.0.0", port)
+    await site.start()
 
 async def on_startup(dispatcher):
-    logging.info("🚀 جاري تشغيل البوت بنجاح...")
-    # تسجيل جميع أقسام الـ Handlers
-    register_start_handlers(dispatcher)
-    register_admin_handlers(dispatcher)
-    register_numbers_handlers(dispatcher)
-    logging.info("✅ تم تحميل جميع الأقسام واللوحات بنجاح!")
+    db.init_db()
+    # تشغيل خادم الويب بجانب البوت
+    await web_server()
+    logging.info("Bot and Web Server started successfully.")
 
 if __name__ == '__main__':
     executor.start_polling(dp, on_startup=on_startup, skip_updates=True)
