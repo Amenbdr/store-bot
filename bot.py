@@ -12,9 +12,9 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 from database import init_db, get_user, update_user_language, save_user_if_not_exists, get_total_users_count
 from admin import show_admin_panel
 
-TELEGRAM_BOT_TOKEN = "YOUR_TELEGRAM_BOT_TOKEN"  # ضع توكن بوتك هنا
-REQUIRED_CHANNEL = "@YourChannelUsername"       # معرف قناتك الإجبارية
-ADMIN_ID = 123456789                            # ضع الآيدي الخاص بك كأدمن
+TELEGRAM_BOT_TOKEN = "5418318795:AAH3_j69zY52UI6rKO1Fcu9CQnezYcEwQiE"  # ضع توكن بوتك هنا
+REQUIRED_CHANNEL = "@SIM_NUMBERS"       # معرف قناتك الإجبارية
+ADMIN_ID = 5396793642                            # ضع الآيدي الخاص بك كأدمن
 
 logging.basicConfig(level=logging.INFO)
 bot = Bot(token=TELEGRAM_BOT_TOKEN)
