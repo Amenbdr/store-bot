@@ -51,31 +51,37 @@ def countries_keyboard(service_id: str, page: int = 0):
     return kb
 
 async def show_numbers_section(call: types.CallbackQuery):
+    await call.answer()
     text = "📱 **قسم الأرقام الوهمية**\n\nاختر التطبيق المراد شراء رقم له:"
     await call.message.edit_text(text, reply_markup=numbers_main_keyboard(), parse_mode="Markdown")
 
 async def select_service_handler(call: types.CallbackQuery):
+    await call.answer("⏳ جاري التحميل...")
     service_id = call.data.split('_')[2]
     app_name = "واتساب" if service_id == "wa" else "تليجرام"
     await call.message.edit_text(f"اختر الدولة المطلوبة لخدمة {app_name}:", reply_markup=countries_keyboard(service_id, page=0))
 
 async def change_page_handler(call: types.CallbackQuery):
+    await call.answer()
     parts = call.data.split('_')
     service_id, page = parts[2], int(parts[3])
     app_name = "واتساب" if service_id == "wa" else "تليجرام"
     await call.message.edit_text(f"اختر الدولة المطلوبة لخدمة {app_name}:", reply_markup=countries_keyboard(service_id, page=page))
 
 async def process_country_handler(call: types.CallbackQuery):
+    await call.answer("⏳ جاري فحص السيرفرات والأسعار...")
     parts = call.data.split('_')
     service_id, country_id = parts[2], parts[3]
     app_name = "واتساب" if service_id == "wa" else "تليجرام"
-    await call.answer("⏳ جاري فحص السيرفرات...", show_alert=False)
+    
     prices_data = sms_service.get_prices(service_id, country_id)
     if not prices_data:
         return await call.answer("❌ لا توجد أرقام متوفرة لهذه الدولة حالياً.", show_alert=True)
+    
     base_cost = 0.50
     if isinstance(prices_data, dict):
         base_cost = float(prices_data.get('cost', prices_data.get('price', 0.50)))
+        
     custom_servers = db.get_custom_servers()
     kb = InlineKeyboardMarkup(row_width=1)
     for index, server in enumerate(custom_servers, start=1):
@@ -83,6 +89,7 @@ async def process_country_handler(call: types.CallbackQuery):
         final_price = round(base_cost + margin, 2)
         button_text = f"{app_name} | {final_price}$ | سيرفر {index}"
         kb.add(InlineKeyboardButton(button_text, callback_data=f"num_buy_{service_id}_{country_id}_{server['id']}_{final_price}"))
+        
     kb.add(InlineKeyboardButton("🔙 العودة لقائمة الدول", callback_data=f"num_service_{service_id}"))
     country_name = COUNTRIES_AR.get(country_id, country_id)
     text = f"📱 **تطبيق:** {app_name}\n🌍 **الدولة:** {country_name}\n\n👇 اختر السيرفر المناسب للشراء:"
@@ -128,10 +135,12 @@ async def buy_number_handler(call: types.CallbackQuery):
     user_id = call.from_user.id
     parts = call.data.split('_')
     service_id, country_id, server_id, final_price = parts[2], parts[3], parts[4], float(parts[5])
+    
     user = db.get_user(user_id)
-    if user['balance'] < final_price:
-        return await call.answer(f"❌ رصيدك غير كافي! السعر: {final_price}$", show_alert=True)
-    await call.answer("⏳ جاري طلب الرقم...", show_alert=True)
+    if not user or user['balance'] < final_price:
+        return await call.answer(f"❌ رصيدك غير كافي! السعر المطلوب: {final_price}$", show_alert=True)
+        
+    await call.answer("⏳ جاري طلب الرقم من السيرفر...", show_alert=True)
     order = sms_service.buy_number(service_id, country_id)
     if order:
         db.update_balance(user_id, -final_price)
@@ -163,21 +172,24 @@ async def buy_number_handler(call: types.CallbackQuery):
             order['activation_id'], order['number'], country_name, app_name, final_price
         ))
     else:
-        await call.answer("❌ تعذر شراء الرقم حالياً. يرجى المحاولة لاحقاً.", show_alert=True)
+        await call.answer("❌ تعذر شراء الرقم حالياً أو نفدت الكمية. يرجى المحاولة لاحقاً.", show_alert=True)
 
 async def check_sms_handler(call: types.CallbackQuery):
     status = sms_service.get_sms_code(call.data.split('_')[2])
     if status == "WAITING":
         await call.answer("⏳ لم يتم استلام الكود بعد...", show_alert=True)
     elif status:
+        await call.answer("📬 تم استلام الكود بنجاح!", show_alert=False)
         await call.message.edit_text(f"📬 **تم استلام كود التفعيل!**\n\nالكود هو: `{status}`", parse_mode="Markdown")
     else:
         await call.answer("⚠️ انتهت المهلة أو تم إلغاء الرقم.", show_alert=True)
 
 async def cancel_number_handler(call: types.CallbackQuery):
+    await call.answer("⏳ جاري معالجة الإلغاء...")
     user_id = call.from_user.id
     parts = call.data.split('_')
     activation_id, price = parts[2], float(parts[3])
+    
     status = sms_service.get_sms_code(activation_id)
     if status and status != "WAITING":
         db.update_balance(user_id, -price)
@@ -188,6 +200,7 @@ async def cancel_number_handler(call: types.CallbackQuery):
             f"❌ **العقوبة المطبقة:** تم تطبيق غرامة وخصم قيمة الرقم (**{price}$**) مرتين من رصيدك."
         )
         return await call.message.edit_text(warning_text, parse_mode="Markdown")
+        
     if sms_service.cancel_activation(activation_id):
         db.update_balance(user_id, price)
         await call.message.edit_text(f"تم إلغاء الرقم بنجاح وإعادة **{price}$** إلى رصيدك. ♻️", parse_mode="Markdown")
