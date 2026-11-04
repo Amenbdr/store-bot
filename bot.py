@@ -1,356 +1,206 @@
-import time
-import threading
+import logging
 import requests
-from telebot import TeleBot, types
-from flask import Flask
+import sqlite3
+from aiogram import Bot, Dispatcher, executor, types
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.contrib.fsm_storage.memory import MemoryStorage
+from aiogram.dispatcher import FSMContext
+from aiogram.dispatcher.filters.state import State, StatesGroup
 
-# ==================== إعدادات سيرفر الويب الوهمي ====================
-app = Flask('')
+# ==========================================
+# ⚙️ إعدادات البوت 
+# ==========================================
+BOT_TOKEN = "5418318795:AAG3lt5CD7OYl4kgCNkReX5r7CwSy8ljZ0I"
+API_URL = "https://smsbower.app/stubs/handler_api.php" # الرابط القياسي المعتمد لأغلب لوحات الأرقام
 
-@app.route('/')
-def home():
-    return "Bot is alive and running!"
+logging.basicConfig(level=logging.INFO)
+bot = Bot(token=BOT_TOKEN)
+# استخدام MemoryStorage لتفعيل نظام انتظار الرسائل (FSM)
+dp = Dispatcher(bot, storage=MemoryStorage())
 
-def run_web():
-    app.run(host='0.0.0.0', port=8080)
+# ==========================================
+# 🗄️ إعداد قاعدة البيانات (SQLite)
+# ==========================================
+conn = sqlite3.connect('bot_users.db', check_same_thread=False)
+cursor = conn.cursor()
+cursor.execute('''
+    CREATE TABLE IF NOT EXISTS users (
+        user_id INTEGER PRIMARY KEY,
+        api_key TEXT
+    )
+''')
+conn.commit()
 
-def keep_alive():
-    t = threading.Thread(target=run_web)
-    t.daemon = True
-    t.start()
-# ====================================================================
+def save_api_key(user_id, api_key):
+    cursor.execute("REPLACE INTO users (user_id, api_key) VALUES (?, ?)", (user_id, api_key))
+    conn.commit()
 
-# ==================== الإعدادات الأساسية للبوت ====================
-TELEGRAM_BOT_TOKEN = "5418318795:AAG3lt5CD7OYl4kgCNkReX5r7CwSy8ljZ0I"
-API_URL = "https://smsbower.app/stubs/handler_api.php"
+def get_api_key(user_id):
+    cursor.execute("SELECT api_key FROM users WHERE user_id = ?", (user_id,))
+    result = cursor.fetchone()
+    return result[0] if result else None
 
-bot = TeleBot(TELEGRAM_BOT_TOKEN)
-
-USER_API_KEYS = {}
-USER_STATES = {}
-USER_COUNTRIES_CACHE = {}
-
-# قاموس لربط أسماء الدول الشائعة بأعلامها العربية
-COUNTRY_FLAGS = {
-    "russia": "🇷🇺 روسيا", "ukraine": "🇺🇦 أوكرانيا", "kazakhstan": "🇰🇿 كازاخستان",
-    "china": "🇨🇳 الصين", "philippines": "🇵🇭 الفلبين", "usa": "🇺🇸 الولايات المتحدة",
-    "canada": "🇨🇦 كندا", "indonesia": "🇮🇩 إندونيسيا", "malaysia": "🇲🇾 ماليزيا",
-    "kenya": "🇰🇪 كينيا", "vietnam": "🇻🇳 فيتنام", "kyrgyzstan": "🇰🇬 قيرغيزستان",
-    "uk": "🇬🇧 بريطانيا", "poland": "🇵🇱 بولندا", "france": "🇫🇷 فرنسا",
-    "egypt": "🇪🇬 مصر", "india": "🇮🇳 الهند", "pakistan": "🇵🇰 باكستان",
-    "brazil": "🇧🇷 البرازيل", "bangladesh": "🇧🇩 بنجلاديش", "ethiopia": "🇪🇹 إثيوبيا",
-    "nigeria": "🇳🇬 نيجيريا", "tanzania": "🇹🇿 تنزانيا", "south africa": "🇿🇦 جنوب أفريقيا"
-}
-
-# دالة الفحص التلقائي لوصول كود الـ SMS في الخلفية
-def auto_check_sms(chat_id, api_key, activation_id, phone):
-    max_attempts = 60  
-    attempt = 0
-
-    while attempt < max_attempts:
-        time.sleep(5)
-        attempt += 1
-
-        params = {
-            'api_key': api_key,
-            'action': 'getStatus',
-            'id': activation_id
-        }
+# ==========================================
+# 🛠 كلاس للتعامل مع API موقع SMSBower
+# ==========================================
+class SmsBower:
+    @staticmethod
+    def get_balance(api_key):
+        params = {'api_key': api_key, 'action': 'getBalance'}
         try:
-            res = requests.get(API_URL, params=params, timeout=10)
-            status_text = res.text.strip()
+            response = requests.get(API_URL, params=params).text
+            if "ACCESS_BALANCE" in response:
+                return response.split(":")[1]
+            return None
+        except:
+            return None
 
-            if "STATUS_CANCEL" in status_text:
-                bot.send_message(chat_id, f"❌ تم إلغاء التفعيل للرقم `{phone}`.", parse_mode="Markdown")
-                return
-            
-            elif "STATUS_WAIT_RETRY" in status_text or "STATUS_WAIT_CODE" in status_text:
-                continue
+    @staticmethod
+    def get_number(api_key, service, country_id):
+        params = {'api_key': api_key, 'action': 'getNumber', 'service': service, 'country': country_id}
+        try:
+            response = requests.get(API_URL, params=params).text
+            if "ACCESS_NUMBER" in response:
+                parts = response.split(":")
+                return {"id": parts[1], "number": parts[2]}
+            return None
+        except:
+            return None
 
-            elif ":" in status_text or len(status_text) > 0:
-                parts = status_text.split(":")
-                code = parts[-1] if len(parts) > 1 else status_text
+    @staticmethod
+    def get_sms(api_key, activation_id):
+        params = {'api_key': api_key, 'action': 'getStatus', 'id': activation_id}
+        try:
+            response = requests.get(API_URL, params=params).text
+            if "STATUS_OK" in response:
+                return response.split(":")[1]
+            elif "STATUS_WAIT_CODE" in response:
+                return "WAITING"
+            return None
+        except:
+            return None
 
-                if "NO_ACTIVATION" not in code and "BAD_KEY" not in code:
-                    bot.send_message(
-                        chat_id,
-                        f"🎉 **لقد وصل رمز التفعيل للرقم `{phone}`!**\n\n🔑 **الرمز:** `{code}`",
-                        parse_mode="Markdown"
-                    )
-                    return
-                
-        except Exception:
-            pass
+# ==========================================
+# 📱 واجهات البوت وحالات FSM
+# ==========================================
+class UserStates(StatesGroup):
+    waiting_for_api = State()
 
-    bot.send_message(
-        chat_id, 
-        f"⏰ انتهت مهلة الانتظار (5 دقائق) ولم يتم رصد رمز للرقم `{phone}` تلقائياً.",
-        parse_mode="Markdown"
+def main_menu():
+    kb = InlineKeyboardMarkup(row_width=2)
+    kb.add(
+        InlineKeyboardButton("📱 شراء رقم تليجرام", callback_data="buy_tg"),
+        InlineKeyboardButton("💰 رصيدي بالموقع", callback_data="check_balance"),
+        InlineKeyboardButton("🔑 إضافة / تغيير الـ API", callback_data="set_api")
     )
+    return kb
 
-# 1. أمر البداية
-@bot.message_handler(commands=['start'])
-def send_welcome(message):
-    chat_id = message.chat.id
-    
-    markup = types.InlineKeyboardMarkup(row_width=1)
-    btn_set_key = types.InlineKeyboardButton("🔑 إدخال/تحديث مفتاح API", callback_data="set_api_key")
-    btn_balance = types.InlineKeyboardButton("💰 فحص الرصيد", callback_data="check_balance")
-    btn_services = types.InlineKeyboardButton("📱 شراء رقم جديد", callback_data="main_menu")
-    
-    markup.add(btn_set_key, btn_balance, btn_services)
-    
-    bot.reply_to(
-        message, 
-        "مرحباً بك في بوت خدمات الأرقام السريع!\n\nيرجى أولاً إدخال مفتاح الـ API الخاص بك من موقع SMSBower للبدء:", 
-        reply_markup=markup
+def countries_menu():
+    kb = InlineKeyboardMarkup(row_width=2)
+    kb.add(
+        InlineKeyboardButton("🇷🇺 روسيا (ID: 0)", callback_data="country_0"),
+        InlineKeyboardButton("🇺🇸 أمريكا (ID: 12)", callback_data="country_12"),
+        InlineKeyboardButton("🔙 رجوع", callback_data="back_main")
     )
+    return kb
 
-# 2. استقبال مفتاح الـ API
-@bot.message_handler(func=lambda message: USER_STATES.get(message.chat.id) == "waiting_for_api_key")
-def receive_api_key(message):
-    chat_id = message.chat.id
+def check_sms_menu(activation_id):
+    kb = InlineKeyboardMarkup(row_width=1)
+    kb.add(
+        InlineKeyboardButton("🔄 تحديث / جلب الكود", callback_data=f"check_sms_{activation_id}"),
+        InlineKeyboardButton("❌ إلغاء الرقم", callback_data=f"cancel_{activation_id}")
+    )
+    return kb
+
+# ==========================================
+# 🤖 أوامر البوت الأساسية
+# ==========================================
+@dp.message_handler(commands=['start'], state='*')
+async def start_cmd(message: types.Message, state: FSMContext):
+    await state.finish()
+    text = "أهلاً بك في بوت الأرقام الوهمية 🚀\nالرجاء إضافة مفتاح API الخاص بك من الموقع لتبدأ."
+    await message.answer(text, reply_markup=main_menu())
+
+# --- نظام إضافة الـ API ---
+@dp.callback_query_handler(lambda c: c.data == 'set_api')
+async def set_api_btn(call: types.CallbackQuery):
+    await call.message.edit_text("أرسل الآن مفتاح API الخاص بك من موقع SMSBower:\n(يمكنك إيجاده في إعدادات حسابك بالموقع)")
+    await UserStates.waiting_for_api.set()
+
+@dp.message_handler(state=UserStates.waiting_for_api)
+async def receive_api_key(message: types.Message, state: FSMContext):
     api_key = message.text.strip()
+    wait_msg = await message.answer("⏳ جاري التحقق من مفتاح الـ API...")
     
-    params = {'api_key': api_key, 'action': 'getBalance'}
-    try:
-        res = requests.get(API_URL, params=params, timeout=10)
-        if "ACCESS_BALANCE" in res.text or ":" in res.text:
-            USER_API_KEYS[chat_id] = api_key
-            USER_STATES[chat_id] = None 
-            
-            balance = res.text.split(":")[-1]
-            bot.reply_to(message, f"✅ **تم حفظ مفتاح الـ API بنجاح!**\n💰 رصيدك الحالي: {balance} $", parse_mode="Markdown")
-        else:
-            bot.reply_to(message, "❌ مفتاح الـ API غير صحيح أو منتهي الصلاحية. يرجى إرسال مفتاح صحيح:")
-    except Exception:
-        bot.reply_to(message, "❌ حدث خطأ أثناء الاتصال بالموقع. حاول لاحقاً.")
-
-# 3. معالجة الأزرار التفاعلية
-@bot.callback_query_handler(func=lambda call: True)
-def handle_callbacks(call):
-    chat_id = call.message.chat.id
-    data = call.data
-
-    if data == "set_api_key":
-        USER_STATES[chat_id] = "waiting_for_api_key"
-        bot.answer_callback_query(call.id)
-        bot.send_message(chat_id, "✍️ أرسل الآن **مفتاح الـ API (API Key)** الخاص بك في رسالة جديدة:")
-
-    elif data == "check_balance":
-        if chat_id not in USER_API_KEYS:
-            bot.answer_callback_query(call.id, "يجب إدخال مفتاح API أولاً!", show_alert=True)
-            return
-            
-        bot.answer_callback_query(call.id)
-        res = requests.get(API_URL, params={'api_key': USER_API_KEYS[chat_id], 'action': 'getBalance'})
-        if "ACCESS_BALANCE" in res.text or ":" in res.text:
-            bal = res.text.split(":")[-1]
-            bot.send_message(chat_id, f"💰 رصيدك الحالي: {bal} $")
-        else:
-            bot.send_message(chat_id, f"❌ خطأ في المفتاح أو استجابة الموقع: {res.text}")
-
-    elif data == "main_menu" or data == "back_to_services":
-        if chat_id not in USER_API_KEYS:
-            bot.answer_callback_query(call.id, "يجب إدخال مفتاح API أولاً!", show_alert=True)
-            return
-
-        markup = types.InlineKeyboardMarkup(row_width=2)
-        btn_wa = types.InlineKeyboardButton("💬 واتساب (WhatsApp)", callback_data="service_wa")
-        btn_tg = types.InlineKeyboardButton("✈️ تليجرام (Telegram)", callback_data="service_tg")
-        btn_balance = types.InlineKeyboardButton("💰 فحص الرصيد", callback_data="check_balance")
-        
-        markup.add(btn_wa, btn_tg)
-        markup.add(btn_balance)
-        
-        bot.edit_message_text(
-            chat_id=chat_id,
-            message_id=call.message.message_id,
-            text="اختر التطبيق الذي تريد شراء رقم له:",
-            reply_markup=markup
-        )
-
-    elif data.startswith("service_"):
-        service_code = data.split("_")[1]
-        bot.answer_callback_query(call.id)
-        load_and_show_countries(chat_id, call.message.message_id, service_code, page=0)
-
-    elif data.startswith("cpage_"):
-        parts = data.split("_")
-        service_code = parts[1]
-        page = int(parts[2])
-        show_countries_page_cached(chat_id, call.message.message_id, service_code, page=page)
-
-    elif data.startswith("select_country_"):
-        parts = data.split("_")
-        service_code = parts[2]
-        country_id = parts[3]
-        
-        bot.answer_callback_query(call.id)
-
-        # واجهة عرض خيارات الشراء المباشر الفوري للدولة المختارة بكل مرونة
-        markup = types.InlineKeyboardMarkup(row_width=1)
-        markup.add(types.InlineKeyboardButton("🚀 تأكيد وشراء الرقم فوراً", callback_data=f"buy_{service_code}_{country_id}_0"))
-        markup.add(types.InlineKeyboardButton("🔙 رجوع لقائمة الدول", callback_data=f"service_{service_code}"))
-
-        bot.edit_message_text(
-            chat_id=chat_id,
-            message_id=call.message.message_id,
-            text=f"🛒 **تأكيد عملية الشراء:**\nالدولة المحددة تحمل المعرف (ID: `{country_id}`).\nانقر على زر الشراء أدناه لإتمام طلب الرقم:",
-            parse_mode="Markdown",
-            reply_markup=markup
-        )
-
-    elif data.startswith("buy_"):
-        parts = data.split("_")
-        service = parts[1]
-        country_numeric_id = parts[2]
-        provider_id = parts[3] if len(parts) > 3 else "0"
-        
-        bot.answer_callback_query(call.id, "جاري طلب الرقم...")
-        
-        user_key = USER_API_KEYS[chat_id]
-        
-        buy_params = {
-            'api_key': user_key,
-            'action': 'getNumber',
-            'service': service,
-            'country': country_numeric_id
-        }
-        if provider_id != "0":
-            buy_params['providerIds'] = provider_id
-
-        res = requests.get(API_URL, params=buy_params)
-        
-        if "ACCESS_NUMBER" in res.text:
-            res_parts = res.text.split(":")
-            activation_id = res_parts[1]
-            phone = res_parts[2] if len(res_parts) > 2 else "متاح"
-            
-            markup = types.InlineKeyboardMarkup(row_width=1)
-            btn_cancel = types.InlineKeyboardButton("❌ إلغاء الرقم واسترداد الرصيد", callback_data=f"cancel_{activation_id}")
-            markup.add(btn_cancel)
-
-            bot.send_message(
-                chat_id,
-                f"✅ **تم شراء الرقم بنجاح!**\n\n"
-                f"📱 **الرقم:** `{phone}`\n"
-                f"🆔 **معرف التفعيل:** `{activation_id}`\n"
-                f"🌍 **ID الدولة:** `{country_numeric_id}`\n\n"
-                f"🔄 **جاري مراقبة وصول كود الـ SMS تلقائياً...**",
-                parse_mode="Markdown",
-                reply_markup=markup
-            )
-
-            t = threading.Thread(target=auto_check_sms, args=(chat_id, user_key, activation_id, phone))
-            t.daemon = True
-            t.start()
-
-        else:
-            bot.send_message(chat_id, f"❌ تعذر شراء الرقم. السبب: {res.text}")
-
-    elif data.startswith("cancel_"):
-        activation_id = data.split("_")[1]
-        bot.answer_callback_query(call.id, "جاري إلغاء الرقم...")
-
-        params = {
-            'api_key': USER_API_KEYS[chat_id],
-            'action': 'setStatus',
-            'status': 8,
-            'id': activation_id
-        }
-        res = requests.get(API_URL, params=params)
-        status_text = res.text.strip()
-
-        if "ACCESS_CANCEL" in status_text or "ACCESS_OK" in status_text:
-            bot.edit_message_text(
-                chat_id=chat_id,
-                message_id=call.message.message_id,
-                text=f"🚫 **تم إلغاء الرقم بنجاح وإعادة رصيدك للحساب!**\n🆔 المعرف: `{activation_id}`",
-                parse_mode="Markdown"
-            )
-        else:
-            bot.send_message(
-                chat_id,
-                f"⚠️ لا يمكن إلغاء الرقم حالياً.\nالاستجابة: {status_text}"
-            )
-
-def load_and_show_countries(chat_id, message_id, service_code, page=0):
-    user_key = USER_API_KEYS.get(chat_id)
-    try:
-        res = requests.get(API_URL, params={'api_key': user_key, 'action': 'getCountries'}, timeout=10)
-        countries_data = res.json()
-        
-        parsed_countries = []
-        if isinstance(countries_data, dict):
-            for k, v in countries_data.items():
-                if isinstance(v, dict):
-                    c_id = str(v.get("id", k))
-                    eng_name = str(v.get("eng", k)).lower()
-                    
-                    display_name = COUNTRY_FLAGS.get(eng_name, f"🌐 {eng_name.capitalize()}")
-                    parsed_countries.append({"id": c_id, "name": display_name})
-
-        USER_COUNTRIES_CACHE[chat_id] = parsed_countries
-        show_countries_page_cached(chat_id, message_id, service_code, page)
-    except Exception:
-        bot.send_message(chat_id, "❌ حدث خطأ أثناء جلب قائمة الدول كاملة من الموقع.")
-
-def show_countries_page_cached(chat_id, message_id, service_code, page=0):
-    countries_list = USER_COUNTRIES_CACHE.get(chat_id, [])
-    items_per_page = 8
-    total_items = len(countries_list)
+    # اختبار الـ API عبر محاولة جلب الرصيد
+    balance = SmsBower.get_balance(api_key)
     
-    start_idx = page * items_per_page
-    end_idx = start_idx + items_per_page
-    
-    page_countries = countries_list[start_idx:end_idx]
-    
-    markup = types.InlineKeyboardMarkup(row_width=2)
-    
-    row_buttons = []
-    for c in page_countries:
-        row_buttons.append(types.InlineKeyboardButton(c["name"], callback_data=f"select_country_{service_code}_{c['id']}"))
-    
-    for i in range(0, len(row_buttons), 2):
-        if i + 1 < len(row_buttons):
-            markup.add(row_buttons[i], row_buttons[i+1])
-        else:
-            markup.add(row_buttons[i])
+    if balance is not None:
+        save_api_key(message.from_user.id, api_key)
+        await wait_msg.edit_text(f"✅ تم ربط حسابك بنجاح!\n💰 رصيدك الحالي: {balance}\n\nيمكنك الآن البدء بشراء الأرقام.", reply_markup=main_menu())
+        await state.finish()
+    else:
+        await wait_msg.edit_text("❌ مفتاح API غير صحيح أو لا يوجد اتصال بالموقع.\nالرجاء إرسال المفتاح الصحيح مرة أخرى:")
+        # يبقى في حالة الانتظار حتى يرسل مفتاح صحيح
 
-    nav_buttons = []
-    if page > 0:
-        nav_buttons.append(types.InlineKeyboardButton("⬅️ السابق", callback_data=f"cpage_{service_code}_{page-1}"))
-    if end_idx < total_items:
-        nav_buttons.append(types.InlineKeyboardButton("التالي ➡️", callback_data=f"cpage_{service_code}_{page+1}"))
+# --- بقية الأوامر (تستخدم الـ API الخاص بالمستخدم) ---
+@dp.callback_query_handler(lambda c: c.data == 'check_balance')
+async def balance_btn(call: types.CallbackQuery):
+    user_api = get_api_key(call.from_user.id)
+    if not user_api:
+        return await call.answer("⚠️ يجب عليك إضافة مفتاح API الخاص بك أولاً!", show_alert=True)
     
-    if nav_buttons:
-        markup.row(*nav_buttons)
+    balance = SmsBower.get_balance(user_api)
+    if balance:
+        await call.message.edit_text(f"💰 رصيد حسابك في الموقع: {balance}", reply_markup=main_menu())
+    else:
+        await call.answer("❌ فشل جلب الرصيد، تأكد من صحة الـ API.", show_alert=True)
 
-    btn_back = types.InlineKeyboardButton("🔙 رجوع للقائمة الرئيسية", callback_data="back_to_services")
-    markup.add(btn_back)
-
-    service_name = "واتساب" if service_code == "wa" else "تليجرام"
-    total_pages = (total_items + items_per_page - 1) // items_per_page
+@dp.callback_query_handler(lambda c: c.data == 'buy_tg')
+async def buy_tg_btn(call: types.CallbackQuery):
+    user_api = get_api_key(call.from_user.id)
+    if not user_api:
+        return await call.answer("⚠️ يجب عليك إضافة مفتاح API الخاص بك أولاً!", show_alert=True)
     
-    try:
-        bot.edit_message_text(
-            chat_id=chat_id,
-            message_id=message_id,
-            text=f"🌍 **قائمة الدول المتاحة لخدمة ({service_name})**\n📄 الصفحة ({page+1} من {total_pages}):",
-            parse_mode="Markdown",
-            reply_markup=markup
-        )
-    except Exception:
-        pass
+    await call.message.edit_text("اختر الدولة المطلوبة للحصول على رقم تليجرام:", reply_markup=countries_menu())
 
-if __name__ == "__main__":
-    keep_alive()
-    print("🤖 البوت يعمل الآن بسلاسة تامة...")
+@dp.callback_query_handler(lambda c: c.data.startswith('country_'))
+async def process_country(call: types.CallbackQuery):
+    user_api = get_api_key(call.from_user.id)
+    country_id = call.data.split('_')[1]
     
-    while True:
-        try:
-            bot.infinity_polling(timeout=60, long_polling_timeout=60)
-        except Exception as e:
-            print(f"⚠️ حدث خطأ في الاتصال: {e}")
-            time.sleep(5)
+    await call.answer("⏳ جاري طلب الرقم من الموقع...", show_alert=True)
+    order = SmsBower.get_number(user_api, service="tg", country_id=country_id)
+    
+    if order:
+        text = f"✅ **تم استخراج الرقم بنجاح!**\n\n📞 الرقم: `+{order['number']}`\n\nاطلب الكود ثم اضغط على التحديث أدناه."
+        await call.message.edit_text(text, parse_mode="Markdown", reply_markup=check_sms_menu(order['id']))
+    else:
+        await call.message.edit_text("❌ الرصيد غير كافٍ أو لا توجد أرقام متاحة لهذه الدولة.", reply_markup=countries_menu())
+
+@dp.callback_query_handler(lambda c: c.data.startswith('check_sms_'))
+async def process_check_sms(call: types.CallbackQuery):
+    user_api = get_api_key(call.from_user.id)
+    activation_id = call.data.split('_')[2]
+    
+    status = SmsBower.get_sms(user_api, activation_id)
+    if status == "WAITING":
+        await call.answer("⏳ لم يصل الكود بعد، انتظر ثواني وحاول التحديث...", show_alert=True)
+    elif status:
+        await call.message.edit_text(f"📬 **وصل الكود!**\n\nكود التفعيل هو: `{status}`", parse_mode="Markdown")
+    else:
+        await call.answer("⚠️ حدث خطأ أو انتهى وقت الرقم.", show_alert=True)
+
+@dp.callback_query_handler(lambda c: c.data.startswith('cancel_'))
+async def cancel_number(call: types.CallbackQuery):
+    user_api = get_api_key(call.from_user.id)
+    activation_id = call.data.split('_')[1]
+    requests.get(API_URL, params={'api_key': user_api, 'action': 'setStatus', 'status': 8, 'id': activation_id})
+    await call.message.edit_text("تم إلغاء الرقم بنجاح. ♻️", reply_markup=main_menu())
+
+@dp.callback_query_handler(lambda c: c.data == 'back_main')
+async def back_main_btn(call: types.CallbackQuery):
+    await call.message.edit_text("القائمة الرئيسية:", reply_markup=main_menu())
+
+if __name__ == '__main__':
+    executor.start_polling(dp, skip_updates=True)
