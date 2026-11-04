@@ -6,6 +6,7 @@ from config import BOT_TOKEN
 from database import db
 from handlers.start import register_start_handlers
 from handlers.numbers_panel import register_numbers_handlers
+from handlers.admin import register_admin_handlers  # <-- استيراد ملف لوحة تحكم الأدمن
 
 # إعداد السجلات
 logging.basicConfig(level=logging.INFO)
@@ -16,6 +17,7 @@ dp = Dispatcher(bot)
 # تسجيل الهاندلرز (المعاملات)
 register_start_handlers(dp)
 register_numbers_handlers(dp)
+register_admin_handlers(dp)  # <-- تسجيل لوحة تحكم الأدمن لتشغيل الأزرار
 
 # --- خادم ويب وهمي لترضية منصة Render والبقاء مجانياً ---
 async def handle(request):
