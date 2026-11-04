@@ -1,8 +1,8 @@
 # إعدادات التوكن ومعلومات البوت
-BOT_TOKEN = "5418318795:AAEB_8T8GjNzNeAi5IQf-krzypUfOCiNZz8"
+BOT_TOKEN = "5418318795:AAH3_j69zY52UI6rKO1Fcu9CQnezYcEwQiE"
 
 # التوكن الافتراضي الخاص بخدمة SMSBower
-DEFAULT_SMSBOWER_KEY = "Usl5WByEKrl7SixKM9AbYCTSFMXXt8FL"
+DEFAULT_SMSBOWER_KEY = "UsI5WbYEkR17SixKM9AbYCTSFMXxt8FL"
 
 # معرفات المشرفين
 ADMIN_IDS = [
