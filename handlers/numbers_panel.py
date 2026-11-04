@@ -74,13 +74,17 @@ async def process_country_handler(call: types.CallbackQuery):
     service_id, country_id = parts[2], parts[3]
     app_name = "واتساب" if service_id == "wa" else "تليجرام"
     
+    # جلب تفاصيل الأسعار المخصصة للدولة والخدمة من السيرفر الخارجي
     prices_data = sms_service.get_prices(service_id, country_id)
     if not prices_data:
         return await call.answer("❌ لا توجد أرقام متوفرة لهذه الدولة حالياً.", show_alert=True)
     
+    # استخراج السعر الحقيقي مع دعم القواميس أو القيم المتعددة
     base_cost = 0.50
     if isinstance(prices_data, dict):
-        base_cost = float(prices_data.get('cost', prices_data.get('price', 0.50)))
+        base_cost = float(prices_data.get(str(country_id), prices_data.get('cost', prices_data.get('price', 0.50))))
+    elif isinstance(prices_data, (int, float)):
+        base_cost = float(prices_data)
         
     custom_servers = db.get_custom_servers()
     kb = InlineKeyboardMarkup(row_width=1)
