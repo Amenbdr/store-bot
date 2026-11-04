@@ -10,5 +10,5 @@ ADMIN_IDS = [
 ]
 
 # معلومات القناة الإجبارية
-CHANNEL_ID = "@YourChannelUsername"
-CHANNEL_LINK = "https://t.me/YourChannelUsername"
+CHANNEL_ID = "@SIM_NUMBERS"
+CHANNEL_LINK = "https://t.me/SIM_NUMBERS"
