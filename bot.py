@@ -71,22 +71,21 @@ class SmsBower:
 
     @staticmethod
     def get_prices(api_key, service, country_id):
-        params = {'api_key': api_key, 'action': 'getPrices', 'service': service, 'country': country_id}
+        # استخدام getPricesV3 بناءً على التوثيق الرسمي لجلب كافة المشغلين
+        params = {'api_key': api_key, 'action': 'getPricesV3', 'service': service, 'country': country_id}
         try:
             response = requests.get(API_URL, params=params)
-            logging.info(f"API Response: {response.text}")
-            
+            logging.info(f"API Response V3: {response.text}")
             data = response.json()
+            
             if isinstance(data, dict):
                 if str(country_id) in data:
                     c_data = data[str(country_id)]
                     if isinstance(c_data, dict) and service in c_data:
-                        service_info = c_data[service]
-                        if isinstance(service_info, dict):
-                            return {"any": service_info}
+                        return c_data[service]
             return None
         except Exception as e:
-            logging.error(f"Error fetching prices: {e}")
+            logging.error(f"Error fetching prices V3: {e}")
             return None
 
     @staticmethod
@@ -95,9 +94,12 @@ class SmsBower:
             'api_key': api_key, 
             'action': 'getNumber', 
             'service': service, 
-            'country': country_id,
-            'operator': operator if operator != "any" else ""
+            'country': country_id
         }
+        # إضافة المشغل إذا توفر لضمان تحديد السيرفر وعدم اختلاف الدولة
+        if operator and str(operator).lower() not in ["default", "any", "none"]:
+            params['operator'] = operator
+            
         try:
             response = requests.get(API_URL, params=params).text
             logging.info(f"Get Number Response: {response}")
@@ -238,12 +240,21 @@ async def process_country(call: types.CallbackQuery):
         return await call.answer("❌ No numbers available for this country.", show_alert=True)
         
     kb = InlineKeyboardMarkup(row_width=1)
-    for operator, info in prices_data.items():
-        if isinstance(info, dict):
-            count = info.get('count', 0)
-            price = info.get('cost', info.get('price', 0))
+    if isinstance(prices_data, dict):
+        if "cost" in prices_data or "price" in prices_data:
+            price = prices_data.get('cost', prices_data.get('price', 0))
+            count = prices_data.get('count', 0)
             if count > 0:
-                kb.add(InlineKeyboardButton(f"Server Available | Price: {price}$ | Stock: {count}", callback_data=f"buy_{service_id}_{country_id}_{operator}"))
+                kb.add(InlineKeyboardButton(f"Server Default | Price: {price}$ | Stock: {count}", callback_data=f"buy_{service_id}_{country_id}_default"))
+        else:
+            for prov_key, info in prices_data.items():
+                if isinstance(info, dict):
+                    count = info.get('count', 0)
+                    price = info.get('price', info.get('cost', 0))
+                    # استخدام provider_id من الاستجابة كما وضح التوثيق
+                    prov_id = info.get('provider_id', prov_key)
+                    if count > 0:
+                        kb.add(InlineKeyboardButton(f"Server {prov_id} | Price: {price}$ | Stock: {count}", callback_data=f"buy_{service_id}_{country_id}_{prov_id}"))
             
     kb.add(InlineKeyboardButton("🔙 Back to Countries", callback_data=f"service_{service_id}"))
     country_name = COUNTRIES.get(country_id, "Unknown")
@@ -256,6 +267,8 @@ async def process_buy(call: types.CallbackQuery):
     service_id = parts[1]
     country_id = parts[2]
     operator = parts[3]
+    if operator == "default":
+        operator = ""
     
     await call.answer("⏳ Ordering number...", show_alert=True)
     order = SmsBower.get_number(user_api, service_id, country_id, operator)
