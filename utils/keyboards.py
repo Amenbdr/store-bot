@@ -1,6 +1,7 @@
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
-def force_sub_keyboard(channel_link: str):
+def force_sub_keyboard(channel_link: str) -> InlineKeyboardMarkup:
+    """لوحة مفاتيح الاشتراك الإجباري في القناة"""
     kb = InlineKeyboardMarkup(row_width=1)
     kb.add(
         InlineKeyboardButton("📢 اشترك في القناة الرسمية أولاً", url=channel_link),
@@ -8,7 +9,8 @@ def force_sub_keyboard(channel_link: str):
     )
     return kb
 
-def main_customer_keyboard(is_admin: bool = False):
+def main_customer_keyboard(is_admin: bool = False) -> InlineKeyboardMarkup:
+    """لوحة المفاتيح الرئيسية للعملاء مع دعم ظهور زر الأدمن للمشرفين فقط"""
     kb = InlineKeyboardMarkup(row_width=2)
     kb.add(
         InlineKeyboardButton("📱 قسم الأرقام الوهمية", callback_data="section_numbers"),
@@ -23,7 +25,8 @@ def main_customer_keyboard(is_admin: bool = False):
         kb.add(InlineKeyboardButton("⚙️ لوحة تحكم الإدارة", callback_data="section_admin"))
     return kb
 
-def admin_main_keyboard():
+def admin_main_keyboard() -> InlineKeyboardMarkup:
+    """لوحة تحكم المشرفين الكاملة والمنسقة بدقة"""
     kb = InlineKeyboardMarkup(row_width=2)
     kb.add(
         InlineKeyboardButton("➕ إضافة رصيد لعميل", callback_data="admin_add_balance"),
