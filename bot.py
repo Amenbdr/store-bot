@@ -19,7 +19,6 @@ bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher(bot, storage=MemoryStorage())
 
 # ==========================================
-# ==========================================
 # 🌍 قائمة الدول الشاملة (تشمل جميع الدول العربية)
 # ==========================================
 COUNTRIES = {
@@ -59,7 +58,8 @@ class SmsBower:
     @staticmethod
     def get_balance(api_key):
         try:
-            response = requests.get(API_URL, params={'api_key': api_key, 'action': 'getBalance'}).text
+            params = {'api_key': api_key, 'action': 'getBalance'}
+            response = requests.get(API_URL, params=params).text
             if "ACCESS_BALANCE" in response:
                 return response.split(":")[1]
             return None
@@ -68,4 +68,77 @@ class SmsBower:
 
     @staticmethod
     def get_prices(api_key, service, country_id):
-        params = {'api_key': api_key, 'action': 'getPrices', 'service': service, 'country'
+        # تم التأكد من إغلاق القاموس بشكل صحيح هنا
+        params = {'api_key': api_key, 'action': 'getPrices', 'service': service, 'country': country_id}
+        try:
+            response = requests.get(API_URL, params=params).json()
+            if str(country_id) in response and service in response[str(country_id)]:
+                return response[str(country_id)][service]
+            return None
+        except:
+            return None
+
+    @staticmethod
+    def get_number(api_key, service, country_id, operator):
+        params = {'api_key': api_key, 'action': 'getNumber', 'service': service, 'country': country_id, 'operator': operator}
+        try:
+            response = requests.get(API_URL, params=params).text
+            if "ACCESS_NUMBER" in response:
+                parts = response.split(":")
+                return {"id": parts[1], "number": parts[2]}
+            return None
+        except:
+            return None
+
+    @staticmethod
+    def get_sms(api_key, activation_id):
+        params = {'api_key': api_key, 'action': 'getStatus', 'id': activation_id}
+        try:
+            response = requests.get(API_URL, params=params).text
+            if "STATUS_OK" in response:
+                return response.split(":")[1]
+            elif "STATUS_WAIT_CODE" in response:
+                return "WAITING"
+            return None
+        except:
+            return None
+
+# ==========================================
+# 📱 واجهات البوت وحالات FSM
+# ==========================================
+class UserStates(StatesGroup):
+    waiting_for_api = State()
+
+def main_menu():
+    kb = InlineKeyboardMarkup(row_width=2)
+    kb.add(
+        InlineKeyboardButton("💬 واتساب", callback_data="service_wa"),
+        InlineKeyboardButton("✈️ تليجرام", callback_data="service_tg")
+    )
+    kb.add(
+        InlineKeyboardButton("💰 رصيدي بالموقع", callback_data="check_balance"),
+        InlineKeyboardButton("🔑 إعداد الـ API", callback_data="set_api")
+    )
+    return kb
+
+def countries_menu(service_id, page=0):
+    kb = InlineKeyboardMarkup(row_width=2)
+    items_per_page = 12
+    country_items = list(COUNTRIES.items())
+    total_pages = math.ceil(len(country_items) / items_per_page)
+    
+    start = page * items_per_page
+    end = start + items_per_page
+    current_countries = country_items[start:end]
+    
+    buttons = []
+    for c_id, c_name in current_countries:
+        buttons.append(InlineKeyboardButton(c_name, callback_data=f"cntry_{service_id}_{c_id}"))
+    kb.add(*buttons)
+    
+    nav_buttons = []
+    if page > 0:
+        nav_buttons.append(InlineKeyboardButton("⬅️ السابق", callback_data=f"page_{service_id}_{page-1}"))
+    if page < total_pages - 1:
+        nav_buttons.append(InlineKeyboardButton("التالي ➡️", callback_data=f"page_{service_id}_{page+1}"))
+        
