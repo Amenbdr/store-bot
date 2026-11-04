@@ -55,7 +55,7 @@ def get_api_key(user_id):
     return result[0] if result else None
 
 # ==========================================
-# 🛠 كلاس SMSBower المحدث
+# 🛠 كلاس SMSBower
 # ==========================================
 class SmsBower:
     @staticmethod
@@ -125,8 +125,8 @@ class UserStates(StatesGroup):
 def main_menu():
     kb = InlineKeyboardMarkup(row_width=2)
     kb.add(
-        InlineKeyboardButton("💬 WhatsApp", callback_data="service_wa"),
-        InlineKeyboardButton("✈️ Telegram", callback_data="service_tg")
+        InlineKeyboardButton("💬 WhatsApp", callback_data="service_whatsapp"),
+        InlineKeyboardButton("✈️ Telegram", callback_data="service_telegram")
     )
     kb.add(
         InlineKeyboardButton("💰 Account Balance", callback_data="check_balance"),
@@ -208,7 +208,7 @@ async def select_service(call: types.CallbackQuery):
     if not user_api: 
         return await call.answer("⚠️ Please set your API Key first!", show_alert=True)
     service_id = call.data.split('_')[1]
-    app_name = "WhatsApp" if service_id == "wa" else "Telegram"
+    app_name = "WhatsApp" if service_id == "whatsapp" else "Telegram"
     await call.message.edit_text(f"Select country for {app_name}:\n(Page 1)", reply_markup=countries_menu(service_id, page=0))
 
 @dp.callback_query_handler(lambda c: c.data.startswith('page_'))
@@ -218,7 +218,7 @@ async def process_page(call: types.CallbackQuery):
         return await call.answer("⚠️ Please set your API Key first!", show_alert=True)
     parts = call.data.split('_')
     service_id, page = parts[1], int(parts[2])
-    app_name = "WhatsApp" if service_id == "wa" else "Telegram"
+    app_name = "WhatsApp" if service_id == "whatsapp" else "Telegram"
     await call.message.edit_text(f"Select country for {app_name}:\n(Page {page + 1})", reply_markup=countries_menu(service_id, page=page))
 
 @dp.callback_query_handler(lambda c: c.data.startswith('cntry_'))
@@ -240,3 +240,64 @@ async def process_country(call: types.CallbackQuery):
             kb.add(InlineKeyboardButton(f"Server {operator.upper()} | Price: {price} | Stock: {count}", callback_data=f"buy_{service_id}_{country_id}_{operator}"))
             
     kb.add(InlineKeyboardButton("🔙 Back to Countries", callback_data=f"service_{service_id}"))
+    country_name = COUNTRIES.get(country_id, "Unknown")
+    await call.message.edit_text(f"📊 Servers for {country_name}:\nSelect server:", reply_markup=kb)
+
+@dp.callback_query_handler(lambda c: c.data.startswith('buy_'))
+async def process_buy(call: types.CallbackQuery):
+    user_api = get_api_key(call.from_user.id)
+    _, service_id, country_id, operator = call.data.split('_')
+    
+    await call.answer("⏳ Ordering number...", show_alert=True)
+    order = SmsBower.get_number(user_api, service_id, country_id, operator)
+    
+    if order:
+        text = f"✅ Number Purchased!\n\n📞 Phone: `+{order['number']}`\n\nGet code in app then click refresh."
+        await call.message.edit_text(text, parse_mode="Markdown", reply_markup=check_sms_menu(order['id']))
+    else:
+        await call.answer("❌ Order failed. Check balance or stock.", show_alert=True)
+
+@dp.callback_query_handler(lambda c: c.data.startswith('check_sms_'))
+async def process_check_sms(call: types.CallbackQuery):
+    user_api = get_api_key(call.from_user.id)
+    activation_id = call.data.split('_')[2]
+    status = SmsBower.get_sms(user_api, activation_id)
+    
+    if status == "WAITING":
+        await call.answer("⏳ SMS not received yet...", show_alert=True)
+    elif status:
+        await call.message.edit_text(f"📬 SMS Code Received!\n\nCode: `{status}`", parse_mode="Markdown")
+    else:
+        await call.answer("⚠️ Timeout or cancelled.", show_alert=True)
+
+@dp.callback_query_handler(lambda c: c.data.startswith('cancel_'))
+async def cancel_number(call: types.CallbackQuery):
+    user_api = get_api_key(call.from_user.id)
+    activation_id = call.data.split('_')[1]
+    params = {'api_key': user_api, 'action': 'setStatus', 'status': 8, 'id': activation_id}
+    requests.get(API_URL, params=params)
+    await call.message.edit_text("Number cancelled successfully. ♻️", reply_markup=main_menu())
+
+@dp.callback_query_handler(lambda c: c.data == 'back_main')
+async def back_main_btn(call: types.CallbackQuery):
+    await call.message.edit_text("Main Menu:", reply_markup=main_menu())
+
+# ==========================================
+# 🌐 تشغيل خادم Flask في الخلفية
+# ==========================================
+app = Flask(__name__)
+
+@app.route('/')
+def home():
+    return "Bot is active!"
+
+def run_flask():
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host="0.0.0.0", port=port)
+
+if __name__ == '__main__':
+    t = Thread(target=run_flask)
+    t.daemon = True
+    t.start()
+    
+    executor.start_polling(dp, skip_updates=True)
