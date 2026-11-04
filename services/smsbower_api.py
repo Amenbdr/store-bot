@@ -13,7 +13,7 @@ class SMSBowerService:
     def get_balance(self) -> float | None:
         params = {'api_key': self.api_key, 'action': 'getBalance'}
         try:
-            res = requests.get(self.API_URL, params=params, timeout=10).text
+            res = requests.get(self.API_URL, params=params, timeout=30).text
             if "ACCESS_BALANCE" in res:
                 return float(res.split(":")[1])
             return None
