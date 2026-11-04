@@ -21,21 +21,8 @@ logging.basicConfig(level=logging.INFO)
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher(bot, storage=MemoryStorage())
 
-# ==========================================
-# 🌍 قائمة الدول الشاملة
-# ==========================================
-COUNTRIES = {
-    "0": "🇷🇺 روسيا", "1": "🇺🇦 أوكرانيا", "2": "🇰🇿 كازاخستان", "3": "🇨🇳 الصين",
-    "4": "🇵🇭 الفلبين", "6": "🇮🇩 إندونيسيا", "12": "🇺🇸 أمريكا", "16": "🇬🇧 بريطانيا",
-    "17": "🇲🇦 المغرب", "21": "🇪🇬 مصر", "22": "🇮🇳 الهند", "29": "🇵🇰 باكستان",
-    "31": "🇿🇦 جنوب أفريقيا", "36": "🇨🇦 كندا", "43": "🇩🇪 ألمانيا", "46": "🇸🇪 السويد",
-    "47": "🇮🇶 العراق", "48": "🇳🇱 هولندا", "53": "🇪🇸 إسبانيا", "58": "🇩🇿 الجزائر",
-    "59": "🇸🇦 السعودية", "73": "🇧🇷 البرازيل", "78": "🇫🇷 فرنسا", "86": "🇮🇹 إيطاليا",
-    "87": "🇾🇪 اليمن", "89": "🇹🇳 تونس", "94": "🇱🇧 لبنان", "95": "🇦🇪 الإمارات",
-    "97": "🇵🇸 فلسطين", "100": "🇱🇾 ليبيا", "104": "🇸🇾 سوريا", "105": "🇸🇩 السودان",
-    "106": "🇰🇼 الكويت", "107": "🇴🇲 عُمان", "111": "🇶🇦 قطر", "114": "🇲🇷 موريتانيا",
-    "116": "🇯🇴 الأردن", "117": "🇵🇹 البرتغال", "145": "🇧🇭 البحرين", "161": "🇹🇷 تركيا"
-}
+# ذاكرة مؤقتة لتخزين الدول المجلوبة من الموقع
+CACHED_COUNTRIES = {}
 
 # ==========================================
 # 🗄️ قاعدة البيانات
@@ -55,72 +42,103 @@ def get_api_key(user_id):
     return result[0] if result else None
 
 # ==========================================
-# 🛠 كلاس SMSBower
+# 🛠 كلاس SMSBower المحدث بالجلب الديناميكي للدول
 # ==========================================
 class SmsBower:
     @staticmethod
     def get_balance(api_key):
         try:
             params = {'api_key': api_key, 'action': 'getBalance'}
-            response = requests.get(API_URL, params=params).text
+            response = requests.get(API_URL, params=params, timeout=10).text
             if "ACCESS_BALANCE" in response:
                 return response.split(":")[1]
             return None
-        except:
+        except Exception as e:
+            logging.error(f"Error get_balance: {e}")
             return None
+
+    @staticmethod
+    def get_countries(api_key):
+        """ جلب قائمة الدول الرسمية والمعرفات الدقيقة من API الموقع """
+        global CACHED_COUNTRIES
+        if CACHED_COUNTRIES:
+            return CACHED_COUNTRIES
+            
+        params = {'api_key': api_key, 'action': 'getCountries'}
+        try:
+            response = requests.get(API_URL, params=params, timeout=10)
+            data = response.json()
+            countries = {}
+            
+            # معالجة القائمة سواء جاءت كـ List أو Dict
+            items = data if isinstance(data, list) else data.values() if isinstance(data, dict) else []
+            for item in items:
+                if isinstance(item, dict):
+                    c_id = str(item.get('id'))
+                    name = item.get('eng') or item.get('rus') or f"Country {c_id}"
+                    countries[c_id] = name
+            
+            if countries:
+                CACHED_COUNTRIES = countries
+            return countries
+        except Exception as e:
+            logging.error(f"Error fetching countries: {e}")
+            return {}
 
     @staticmethod
     def get_prices(api_key, service, country_id):
-        # استخدام getPricesV3 بناءً على التوثيق الرسمي لجلب كافة المشغلين
-        params = {'api_key': api_key, 'action': 'getPricesV3', 'service': service, 'country': country_id}
+        params = {'api_key': api_key, 'action': 'getPricesV3', 'service': service, 'country': str(country_id)}
         try:
-            response = requests.get(API_URL, params=params)
-            logging.info(f"API Response V3: {response.text}")
+            response = requests.get(API_URL, params=params, timeout=10)
+            logging.info(f"API Prices V3 Response (Country {country_id}): {response.text}")
             data = response.json()
             
-            if isinstance(data, dict):
-                if str(country_id) in data:
-                    c_data = data[str(country_id)]
-                    if isinstance(c_data, dict) and service in c_data:
-                        return c_data[service]
+            if isinstance(data, dict) and str(country_id) in data:
+                c_data = data[str(country_id)]
+                if isinstance(c_data, dict) and service in c_data:
+                    return c_data[service]
             return None
         except Exception as e:
-            logging.error(f"Error fetching prices V3: {e}")
+            logging.error(f"Error get_prices: {e}")
             return None
 
     @staticmethod
-    def get_number(api_key, service, country_id, operator):
+    def get_number(api_key, service, country_id, operator=None):
         params = {
             'api_key': api_key, 
             'action': 'getNumber', 
             'service': service, 
-            'country': country_id
+            'country': str(country_id)
         }
-        # إضافة المشغل إذا توفر لضمان تحديد السيرفر وعدم اختلاف الدولة
-        if operator and str(operator).lower() not in ["default", "any", "none"]:
-            params['operator'] = operator
+        
+        if operator and str(operator).lower() not in ["default", "any", "none", "auto", ""] and not str(operator).isdigit():
+            params['operator'] = str(operator)
             
         try:
-            response = requests.get(API_URL, params=params).text
-            logging.info(f"Get Number Response: {response}")
+            logging.info(f"Ordering number with exact country ID {country_id}: {params}")
+            response = requests.get(API_URL, params=params, timeout=15).text
+            logging.info(f"Get Number Raw Response: {response}")
+            
             if "ACCESS_NUMBER" in response:
                 parts = response.split(":")
                 return {"id": parts[1], "number": parts[2]}
             return None
-        except:
+        except Exception as e:
+            logging.error(f"Error get_number: {e}")
             return None
 
     @staticmethod
     def get_sms(api_key, activation_id):
         params = {'api_key': api_key, 'action': 'getStatus', 'id': activation_id}
         try:
-            response = requests.get(API_URL, params=params).text
+            response = requests.get(API_URL, params=params, timeout=10).text
             if "STATUS_OK" in response:
                 return response.split(":")[1]
             elif "STATUS_WAIT_CODE" in response:
                 return "WAITING"
             return None
-        except:
+        except Exception as e:
+            logging.error(f"Error get_sms: {e}")
             return None
 
 # ==========================================
@@ -141,11 +159,11 @@ def main_menu():
     )
     return kb
 
-def countries_menu(service_id, page=0):
+def countries_menu(countries_dict, service_id, page=0):
     kb = InlineKeyboardMarkup(row_width=2)
     items_per_page = 12
-    country_items = list(COUNTRIES.items())
-    total_pages = math.ceil(len(country_items) / items_per_page)
+    country_items = list(countries_dict.items())
+    total_pages = math.ceil(len(country_items) / items_per_page) if country_items else 1
     
     start = page * items_per_page
     end = start + items_per_page
@@ -153,7 +171,7 @@ def countries_menu(service_id, page=0):
     
     buttons = []
     for c_id, c_name in current_countries:
-        buttons.append(InlineKeyboardButton(c_name, callback_data=f"cntry_{service_id}_{c_id}"))
+        buttons.append(InlineKeyboardButton(f"🌐 {c_name}", callback_data=f"cntry_{service_id}_{c_id}"))
     kb.add(*buttons)
     
     nav_buttons = []
@@ -214,19 +232,30 @@ async def select_service(call: types.CallbackQuery):
     user_api = get_api_key(call.from_user.id)
     if not user_api: 
         return await call.answer("⚠️ Please set your API Key first!", show_alert=True)
+    
     service_id = call.data.split('_')[1]
     app_name = "WhatsApp" if service_id == "wa" else "Telegram"
-    await call.message.edit_text(f"Select country for {app_name}:\n(Page 1)", reply_markup=countries_menu(service_id, page=0))
+    
+    await call.answer("⏳ Loading official country list...", show_alert=False)
+    countries = SmsBower.get_countries(user_api)
+    
+    if not countries:
+        return await call.answer("❌ Error loading country list from API.", show_alert=True)
+        
+    await call.message.edit_text(f"Select country for {app_name}:\n(Page 1)", reply_markup=countries_menu(countries, service_id, page=0))
 
 @dp.callback_query_handler(lambda c: c.data.startswith('page_'))
 async def process_page(call: types.CallbackQuery):
     user_api = get_api_key(call.from_user.id)
     if not user_api: 
         return await call.answer("⚠️ Please set your API Key first!", show_alert=True)
+        
     parts = call.data.split('_')
     service_id, page = parts[1], int(parts[2])
     app_name = "WhatsApp" if service_id == "wa" else "Telegram"
-    await call.message.edit_text(f"Select country for {app_name}:\n(Page {page + 1})", reply_markup=countries_menu(service_id, page=page))
+    
+    countries = SmsBower.get_countries(user_api)
+    await call.message.edit_text(f"Select country for {app_name}:\n(Page {page + 1})", reply_markup=countries_menu(countries, service_id, page=page))
 
 @dp.callback_query_handler(lambda c: c.data.startswith('cntry_'))
 async def process_country(call: types.CallbackQuery):
@@ -237,28 +266,31 @@ async def process_country(call: types.CallbackQuery):
     prices_data = SmsBower.get_prices(user_api, service_id, country_id)
     
     if not prices_data:
-        return await call.answer("❌ No numbers available for this country.", show_alert=True)
+        return await call.answer("❌ No numbers available for this country right now.", show_alert=True)
         
     kb = InlineKeyboardMarkup(row_width=1)
+    kb.add(InlineKeyboardButton("⚡ Buy Auto (Best Available Server)", callback_data=f"buy_{service_id}_{country_id}_auto"))
+    
     if isinstance(prices_data, dict):
         if "cost" in prices_data or "price" in prices_data:
             price = prices_data.get('cost', prices_data.get('price', 0))
             count = prices_data.get('count', 0)
             if count > 0:
-                kb.add(InlineKeyboardButton(f"Server Default | Price: {price}$ | Stock: {count}", callback_data=f"buy_{service_id}_{country_id}_default"))
+                kb.add(InlineKeyboardButton(f"Direct Server | Price: {price}$ | Stock: {count}", callback_data=f"buy_{service_id}_{country_id}_auto"))
         else:
             for prov_key, info in prices_data.items():
                 if isinstance(info, dict):
                     count = info.get('count', 0)
                     price = info.get('price', info.get('cost', 0))
-                    # استخدام provider_id من الاستجابة كما وضح التوثيق
                     prov_id = info.get('provider_id', prov_key)
                     if count > 0:
-                        kb.add(InlineKeyboardButton(f"Server {prov_id} | Price: {price}$ | Stock: {count}", callback_data=f"buy_{service_id}_{country_id}_{prov_id}"))
+                        kb.add(InlineKeyboardButton(f"Server #{prov_id} | Price: {price}$ | Stock: {count}", callback_data=f"buy_{service_id}_{country_id}_{prov_id}"))
             
     kb.add(InlineKeyboardButton("🔙 Back to Countries", callback_data=f"service_{service_id}"))
-    country_name = COUNTRIES.get(country_id, "Unknown")
-    await call.message.edit_text(f"📊 Servers for {country_name}:\nSelect server:", reply_markup=kb)
+    
+    countries = SmsBower.get_countries(user_api)
+    country_name = countries.get(str(country_id), f"ID {country_id}")
+    await call.message.edit_text(f"📊 Available Servers for {country_name} (ID: {country_id}):\nSelect server:", reply_markup=kb)
 
 @dp.callback_query_handler(lambda c: c.data.startswith('buy_'))
 async def process_buy(call: types.CallbackQuery):
@@ -267,17 +299,20 @@ async def process_buy(call: types.CallbackQuery):
     service_id = parts[1]
     country_id = parts[2]
     operator = parts[3]
-    if operator == "default":
-        operator = ""
+    
+    if operator in ["auto", "default", "any"]:
+        operator = None
     
     await call.answer("⏳ Ordering number...", show_alert=True)
     order = SmsBower.get_number(user_api, service_id, country_id, operator)
     
     if order:
-        text = f"✅ Number Purchased Successfully!\n\n📞 Phone: `+{order['number']}`\n\nGet code in app then click refresh."
+        countries = SmsBower.get_countries(user_api)
+        country_name = countries.get(str(country_id), f"ID {country_id}")
+        text = f"✅ Number Purchased Successfully!\n\n🌍 Country: {country_name}\n📞 Phone: `+{order['number']}`\n\nGet code in app then click refresh."
         await call.message.edit_text(text, parse_mode="Markdown", reply_markup=check_sms_menu(order['id']))
     else:
-        await call.answer("❌ Order failed. Check balance or stock.", show_alert=True)
+        await call.answer("❌ Order failed. Check balance or country stock.", show_alert=True)
 
 @dp.callback_query_handler(lambda c: c.data.startswith('check_sms_'))
 async def process_check_sms(call: types.CallbackQuery):
