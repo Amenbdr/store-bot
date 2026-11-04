@@ -55,7 +55,7 @@ def get_api_key(user_id):
     return result[0] if result else None
 
 # ==========================================
-# 🛠 كلاس SMSBower المحدث لضمان جلب كامل السيرفرات ودقة الشراء
+# 🛠 كلاس SMSBower المحدث خصيصاً لهيكل الاستجابة المباشر
 # ==========================================
 class SmsBower:
     @staticmethod
@@ -78,16 +78,14 @@ class SmsBower:
             
             data = response.json()
             if isinstance(data, dict):
-                # استخراج بيانات الدولة المحددة
+                # الهيكل المباشر: country -> service -> {cost, count}
                 if str(country_id) in data:
                     c_data = data[str(country_id)]
                     if isinstance(c_data, dict) and service in c_data:
-                        service_data = c_data[service]
-                        # إذا كانت البيانات تحتوي على عدة مشغلين (مثل server1, server2 أو مخزن كـ dict للمشغلين)
-                        if isinstance(service_data, dict):
-                            return service_data
-                        else:
-                            return {"any": service_data}
+                        service_info = c_data[service]
+                        # إرجاع البيانات في شكل قاموس للمشغل الافتراضي
+                        if isinstance(service_info, dict):
+                            return {"any": service_info}
             return None
         except Exception as e:
             logging.error(f"Error fetching prices: {e}")
@@ -95,13 +93,12 @@ class SmsBower:
 
     @staticmethod
     def get_number(api_key, service, country_id, operator):
-        # تمرير الدولة والمشغل والخدمة بدقة لضمان عدم اختلاف الدولة
         params = {
             'api_key': api_key, 
             'action': 'getNumber', 
             'service': service, 
             'country': country_id,
-            'operator': operator
+            'operator': operator if operator != "any" else ""
         }
         try:
             response = requests.get(API_URL, params=params).text
@@ -247,11 +244,8 @@ async def process_country(call: types.CallbackQuery):
         if isinstance(info, dict):
             count = info.get('count', 0)
             price = info.get('cost', info.get('price', 0))
-        else:
-            continue
-            
-        if count > 0:
-            kb.add(InlineKeyboardButton(f"Server {operator.upper()} | Price: {price}$ | Stock: {count}", callback_data=f"buy_{service_id}_{country_id}_{operator}"))
+            if count > 0:
+                kb.add(InlineKeyboardButton(f"Server Available | Price: {price}$ | Stock: {count}", callback_data=f"buy_{service_id}_{country_id}_{operator}"))
             
     kb.add(InlineKeyboardButton("🔙 Back to Countries", callback_data=f"service_{service_id}"))
     country_name = COUNTRIES.get(country_id, "Unknown")
@@ -310,11 +304,4 @@ def home():
 
 def run_flask():
     port = int(os.environ.get("PORT", 10000))
-    app.run(host="0.0.0.0", port=port)
-
-if __name__ == '__main__':
-    t = Thread(target=run_flask)
-    t.daemon = True
-    t.start()
-    
-    executor.start_polling(dp, skip_updates=True)
+    app.run(host="0.
