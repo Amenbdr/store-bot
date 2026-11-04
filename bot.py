@@ -55,7 +55,7 @@ def get_api_key(user_id):
     return result[0] if result else None
 
 # ==========================================
-# 🛠 كلاس SMSBower المحدث خصيصاً لهيكل الاستجابة المباشر
+# 🛠 كلاس SMSBower
 # ==========================================
 class SmsBower:
     @staticmethod
@@ -78,12 +78,10 @@ class SmsBower:
             
             data = response.json()
             if isinstance(data, dict):
-                # الهيكل المباشر: country -> service -> {cost, count}
                 if str(country_id) in data:
                     c_data = data[str(country_id)]
                     if isinstance(c_data, dict) and service in c_data:
                         service_info = c_data[service]
-                        # إرجاع البيانات في شكل قاموس للمشغل الافتراضي
                         if isinstance(service_info, dict):
                             return {"any": service_info}
             return None
@@ -304,4 +302,11 @@ def home():
 
 def run_flask():
     port = int(os.environ.get("PORT", 10000))
-    app.run(host="0.
+    app.run(host="0.0.0.0", port=port)
+
+if __name__ == '__main__':
+    t = Thread(target=run_flask)
+    t.daemon = True
+    t.start()
+    
+    executor.start_polling(dp, skip_updates=True)
