@@ -55,7 +55,7 @@ def get_api_key(user_id):
     return result[0] if result else None
 
 # ==========================================
-# 🛠 كلاس SMSBower
+# 🛠 كلاس SMSBower المحدث بدقة حسب استجابة الموقع
 # ==========================================
 class SmsBower:
     @staticmethod
@@ -78,14 +78,10 @@ class SmsBower:
             
             data = response.json()
             if isinstance(data, dict):
-                res_data = data.get("data", data)
-                if isinstance(res_data, dict):
-                    if str(country_id) in res_data:
-                        c_data = res_data[str(country_id)]
-                        if isinstance(c_data, dict) and service in c_data:
-                            return c_data[service]
-                    if service in res_data:
-                        return res_data[service]
+                if str(country_id) in data:
+                    c_data = data[str(country_id)]
+                    if isinstance(c_data, dict) and service in c_data:
+                        return { "default": c_data[service] }
             return None
         except Exception as e:
             logging.error(f"Error fetching prices: {e}")
@@ -93,7 +89,7 @@ class SmsBower:
 
     @staticmethod
     def get_number(api_key, service, country_id, operator):
-        params = {'api_key': api_key, 'action': 'getNumber', 'service': service, 'country': country_id, 'operator': operator}
+        params = {'api_key': api_key, 'action': 'getNumber', 'service': service, 'country': country_id}
         try:
             response = requests.get(API_URL, params=params).text
             if "ACCESS_NUMBER" in response:
@@ -235,7 +231,7 @@ async def process_country(call: types.CallbackQuery):
     kb = InlineKeyboardMarkup(row_width=1)
     for operator, info in prices_data.items():
         count = info.get('count', 0)
-        price = info.get('price', 0)
+        price = info.get('cost', 0)
         if count > 0:
             kb.add(InlineKeyboardButton(f"Server {operator.upper()} | Price: {price} | Stock: {count}", callback_data=f"buy_{service_id}_{country_id}_{operator}"))
             
