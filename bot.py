@@ -22,7 +22,7 @@ bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher(bot, storage=MemoryStorage())
 
 # ==========================================
-# 🌍 قائمة الدول الشاملة (تشمل جميع الدول العربية)
+# 🌍 قائمة الدول الشاملة (جميع الدول العربية والأجنبية)
 # ==========================================
 COUNTRIES = {
     "0": "🇷🇺 روسيا", "1": "🇺🇦 أوكرانيا", "2": "🇰🇿 كازاخستان", "3": "🇨🇳 الصين",
@@ -114,12 +114,12 @@ class UserStates(StatesGroup):
 def main_menu():
     kb = InlineKeyboardMarkup(row_width=2)
     kb.add(
-        InlineKeyboardButton("💬 واتساب", callback_data="service_wa"),
-        InlineKeyboardButton("✈️ تليجرام", callback_data="service_tg")
+        InlineKeyboardButton("💬 WhatsApp", callback_data="service_wa"),
+        InlineKeyboardButton("✈️ Telegram", callback_data="service_tg")
     )
     kb.add(
-        InlineKeyboardButton("💰 رصيدي بالموقع", callback_data="check_balance"),
-        InlineKeyboardButton("🔑 إعداد الـ API", callback_data="set_api")
+        InlineKeyboardButton("💰 Account Balance", callback_data="check_balance"),
+        InlineKeyboardButton("🔑 Set API Key", callback_data="set_api")
     )
     return kb
 
@@ -140,45 +140,16 @@ def countries_menu(service_id, page=0):
     
     nav_buttons = []
     if page > 0:
-        nav_buttons.append(InlineKeyboardButton("⬅️ السابق", callback_data=f"page_{service_id}_{page-1}"))
+        nav_buttons.append(InlineKeyboardButton("⬅️ Prev", callback_data=f"page_{service_id}_{page-1}"))
     if page < total_pages - 1:
-        nav_buttons.append(InlineKeyboardButton("التالي ➡️", callback_data=f"page_{service_id}_{page+1}"))
+        nav_buttons.append(InlineKeyboardButton("Next ➡️", callback_data=f"page_{service_id}_{page+1}"))
         
     if nav_buttons:
         kb.row(*nav_buttons)
         
-    kb.add(InlineKeyboardButton("🔙 رجوع للرئيسية", callback_data="back_main"))
+    kb.add(InlineKeyboardButton("🔙 Main Menu", callback_data="back_main"))
     return kb
 
 def check_sms_menu(activation_id):
     kb = InlineKeyboardMarkup(row_width=1)
-    kb.add(
-        InlineKeyboardButton("🔄 تحديث / جلب الكود", callback_data=f"check_sms_{activation_id}"),
-        InlineKeyboardButton("❌ إلغاء الرقم", callback_data=f"cancel_{activation_id}")
-    )
-    return kb
-
-# ==========================================
-# 🤖 أوامر البوت الأساسية
-# ==========================================
-@dp.message_handler(commands=['start'], state='*')
-async def start_cmd(message: types.Message, state: FSMContext):
-    await state.finish()
-    await message.answer("أهلاً بك في بوت الأرقام الوهمية الاحترافي 🚀\nاختر التطبيق الذي تريد تفعيله:", reply_markup=main_menu())
-
-@dp.callback_query_handler(lambda c: c.data == 'set_api')
-async def set_api_btn(call: types.CallbackQuery):
-    await call.message.edit_text("أرسل الآن مفتاح API الخاص بك من الموقع:")
-    await UserStates.waiting_for_api.set()
-
-@dp.message_handler(state=UserStates.waiting_for_api)
-async def receive_api_key(message: types.Message, state: FSMContext):
-    api_key = message.text.strip()
-    wait_msg = await message.answer("⏳ جاري التحقق من مفتاح الـ API...")
-    balance = SmsBower.get_balance(api_key)
-    if balance is not None:
-        save_api_key(message.from_user.id, api_key)
-        await wait_msg.edit_text(f"✅ تم ربط الحساب بنجاح!\n💰 رصيدك: {balance}\nيمكنك الآن شراء الأرقام.", reply_markup=main_menu())
-        await state.finish()
-    else:
-        await wait_msg.edit_text("❌ مفتاح API غير صحيح! أ
+    kb
