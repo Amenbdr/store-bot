@@ -266,4 +266,38 @@ async def process_check_sms(call: types.CallbackQuery):
     if status == "WAITING":
         await call.answer("⏳ SMS not received yet...", show_alert=True)
     elif status:
-        await call.message.edit_text(f"📬 SMS
+        await call.message.edit_text(f"📬 SMS Code Received!\n\nCode: `{status}`", parse_mode="Markdown")
+    else:
+        await call.answer("⚠️ Timeout or cancelled.", show_alert=True)
+
+@dp.callback_query_handler(lambda c: c.data.startswith('cancel_'))
+async def cancel_number(call: types.CallbackQuery):
+    user_api = get_api_key(call.from_user.id)
+    activation_id = call.data.split('_')[1]
+    params = {'api_key': user_api, 'action': 'setStatus', 'status': 8, 'id': activation_id}
+    requests.get(API_URL, params=params)
+    await call.message.edit_text("Number cancelled successfully. ♻️", reply_markup=main_menu())
+
+@dp.callback_query_handler(lambda c: c.data == 'back_main')
+async def back_main_btn(call: types.CallbackQuery):
+    await call.message.edit_text("Main Menu:", reply_markup=main_menu())
+
+# ==========================================
+# 🌐 تشغيل خادم Flask في الخلفية
+# ==========================================
+app = Flask(__name__)
+
+@app.route('/')
+def home():
+    return "Bot is active!"
+
+def run_flask():
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host="0.0.0.0", port=port)
+
+if __name__ == '__main__':
+    t = Thread(target=run_flask)
+    t.daemon = True
+    t.start()
+    
+    executor.start_polling(dp, skip_updates=True)
