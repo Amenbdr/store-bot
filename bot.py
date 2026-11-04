@@ -68,4 +68,4 @@ class SmsBower:
 
     @staticmethod
     def get_prices(api_key, service, country_id):
-        params = {'api_key': api_key, 'action': 'getPrices', 'service': service, 'country
+        params = {'api_key': api_key, 'action': 'getPrices', 'service': service, 'country'
