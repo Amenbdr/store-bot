@@ -14,13 +14,21 @@ def init_api_config_db():
         )
     """)
     cursor.execute("""
+        CREATE TABLE IF NOT EXISTS pinned_products (
+            product_id TEXT PRIMARY KEY,
+            product_name TEXT,
+            price REAL DEFAULT 0.0,
+            description TEXT DEFAULT ''
+        )
+    """)
+    cursor.execute("""
         INSERT OR IGNORE INTO api_providers (provider_key, provider_name, api_key, base_url)
-        VALUES ('foxreload', 'FoxReload API', 'dmk_SLDMDj7c85zyzMGiCN56JGFYsu0Dyc_cuFL9DWxcpEA', 'https://public-api.foxreload.com/api/orders/')
+        VALUES ('foxreload', 'FoxReload API', 'dmk_SLDMDj7c85zyzMGiCN56JGFYsu0Dyc_cuFL9DWxcpEA', 'https://public-api.foxreload.com')
     """)
     conn.commit()
     conn.close()
 
-def get_provider_config(provider_key: str):
+def get_provider_config(provider_key: str = "foxreload"):
     init_api_config_db()
     conn = sqlite3.connect("secure_bot_database.db")
     cursor = conn.cursor()
@@ -48,41 +56,92 @@ def get_all_providers():
     conn.close()
     return rows
 
-# قائمة الخدمات والاشتراكات كاملة
-SERVICES_CATALOG = {
-    "stars": {
-        "name": "⭐ شحن نجوم تليجرام (Stars)",
-        "product_id": "YOUR_STARS_PRODUCT_ID",
-        "provider": "foxreload"
-    },
-    "premium_1m": {
-        "name": "💎 اشتراك بريميوم (شهر)",
-        "product_id": "YOUR_PREMIUM_1M_ID",
-        "provider": "foxreload"
-    },
-    "premium_3m": {
-        "name": "📅 اشتراك بريميوم (3 أشهر)",
-        "product_id": "YOUR_PREMIUM_3M_ID",
-        "provider": "foxreload"
-    },
-    "premium_6m": {
-        "name": "📅 اشتراك بريميوم (6 أشهر)",
-        "product_id": "YOUR_PREMIUM_6M_ID",
-        "provider": "foxreload"
-    },
-    "premium_1y": {
-        "name": "📅 اشتراك بريميوم (سنة)",
-        "product_id": "YOUR_PREMIUM_1Y_ID",
-        "provider": "foxreload"
+def get_pinned_products():
+    init_api_config_db()
+    conn = sqlite3.connect("secure_bot_database.db")
+    cursor = conn.cursor()
+    cursor.execute("SELECT product_id, product_name, price, description FROM pinned_products")
+    rows = cursor.fetchall()
+    conn.close()
+    return rows
+
+def pin_product(product_id: str, product_name: str, price: float, description: str):
+    init_api_config_db()
+    conn = sqlite3.connect("secure_bot_database.db")
+    cursor = conn.cursor()
+    cursor.execute("""
+        INSERT OR REPLACE INTO pinned_products (product_id, product_name, price, description) 
+        VALUES (?, ?, ?, ?)
+    """, (product_id, product_name, price, description))
+    conn.commit()
+    conn.close()
+
+def unpin_product(product_id: str):
+    init_api_config_db()
+    conn = sqlite3.connect("secure_bot_database.db")
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM pinned_products WHERE product_id = ?", (product_id,))
+    conn.commit()
+    conn.close()
+
+async def search_products_from_provider(query: str, provider_key: str = "foxreload"):
+    config = get_provider_config(provider_key)
+    if not config:
+        return []
+    
+    url = f"{config['base_url']}/api/products/search?query={query}&limit=10"
+    headers = {
+        "X-API-Key": config["api_key"],
+        "X-Language": "en",
+        "X-Currency": "usd",
+        "Accept": "application/json"
     }
-}
+    
+    timeout = aiohttp.ClientTimeout(total=30)
+    async with aiohttp.ClientSession(timeout=timeout) as session:
+        try:
+            async with session.get(url, headers=headers) as response:
+                if response.status == 200:
+                    data = await response.json()
+                    return data.get("items", []) or data.get("data", [])
+                else:
+                    return []
+        except Exception as e:
+            logging.error(f"Search exception: {str(e)}")
+            return []
+
+async def get_product_details_from_provider(product_id_or_slug: str, provider_key: str = "foxreload"):
+    config = get_provider_config(provider_key)
+    if not config:
+        return None
+    
+    url = f"{config['base_url']}/api/products/{product_id_or_slug}"
+    headers = {
+        "X-API-Key": config["api_key"],
+        "X-Language": "en",
+        "X-Currency": "usd",
+        "Accept": "application/json"
+    }
+    
+    timeout = aiohttp.ClientTimeout(total=30)
+    async with aiohttp.ClientSession(timeout=timeout) as session:
+        try:
+            async with session.get(url, headers=headers) as response:
+                if response.status == 200:
+                    data = await response.json()
+                    return data
+                else:
+                    return None
+        except Exception as e:
+            logging.error(f"Get product details exception: {str(e)}")
+            return None
 
 async def check_provider_balance(provider_key: str):
     config = get_provider_config(provider_key)
     if not config:
         return "الموقع غير موجود"
     
-    balance_url = "https://public-api.foxreload.com/api/access/me/balances/"
+    balance_url = f"{config['base_url']}/api/access/me/balances/"
     headers = {
         "X-API-Key": config["api_key"],
         "X-Language": "en",
@@ -102,19 +161,12 @@ async def check_provider_balance(provider_key: str):
         except Exception as e:
             return f"تعذر الاتصال: {str(e)}"
 
-async def send_order_to_provider(service_code: str, target_info: str):
-    service_info = SERVICES_CATALOG.get(service_code)
-    if not service_info:
-        return False, "Service not found."
-    
-    provider_key = service_info["provider"]
+async def send_order_to_provider(product_id: str, target_info: str, quantity: int = 1, provider_key: str = "foxreload"):
     config = get_provider_config(provider_key)
     if not config:
         return False, "Provider config not found."
         
-    product_id = service_info["product_id"]
-    url = config["base_url"]
-    
+    url = f"{config['base_url']}/api/orders/"
     headers = {
         "X-API-Key": config["api_key"],
         "X-Language": "en",
@@ -126,7 +178,7 @@ async def send_order_to_provider(service_code: str, target_info: str):
         "items": [
             {
                 "itemId": product_id,
-                "quantity": 1,
+                "quantity": quantity,
                 "link": target_info
             }
         ]
@@ -144,8 +196,64 @@ async def send_order_to_provider(service_code: str, target_info: str):
                 if response.status in [200, 201]:
                     return True, res_data
                 else:
-                    logging.error(f"API Error Status {response.status}: {res_data}")
                     return False, res_data
         except Exception as e:
-            logging.error(f"API Connection Exception: {str(e)}")
             return False, str(e)
+
+async def pay_order_in_provider(order_id: str, provider_key: str = "foxreload"):
+    config = get_provider_config(provider_key)
+    if not config:
+        return False, "Provider config not found."
+        
+    url = f"{config['base_url']}/api/orders/{order_id}/pay"
+    headers = {
+        "X-API-Key": config["api_key"],
+        "X-Language": "en",
+        "X-Currency": "usd",
+        "Accept": "application/json",
+        "Content-Type": "application/json"
+    }
+    payload = {
+        "paymentProvider": None
+    }
+    
+    timeout = aiohttp.ClientTimeout(total=30)
+    async with aiohttp.ClientSession(timeout=timeout) as session:
+        try:
+            async with session.post(url, json=payload, headers=headers) as response:
+                try:
+                    res_data = await response.json()
+                except Exception:
+                    res_data = await response.text()
+                
+                if response.status in [200, 201]:
+                    return True, res_data
+                else:
+                    return False, res_data
+        except Exception as e:
+            return False, str(e)
+
+async def get_order_status_from_provider(order_id: str, provider_key: str = "foxreload"):
+    config = get_provider_config(provider_key)
+    if not config:
+        return None
+    
+    url = f"{config['base_url']}/api/orders/{order_id}"
+    headers = {
+        "X-API-Key": config["api_key"],
+        "X-Language": "en",
+        "X-Currency": "usd",
+        "Accept": "application/json"
+    }
+    
+    timeout = aiohttp.ClientTimeout(total=30)
+    async with aiohttp.ClientSession(timeout=timeout) as session:
+        try:
+            async with session.get(url, headers=headers) as response:
+                if response.status == 200:
+                    data = await response.json()
+                    return data
+                else:
+                    return None
+        except Exception as e:
+            return None
