@@ -80,7 +80,7 @@ async def cmd_start(message: types.Message, state: FSMContext):
         builder.button(text="SIM_NUMBERS✅", url="https://t.me/SIM_NUMBERS")
         builder.button(text="🔄 تحقق من الاشتراك", callback_data="check_sub")
         builder.adjust(1)
-        return message.answer("⚠️ **يجب عليك الاشتراك في القناة أولاً!**", reply_markup=builder.as_markup(), parse_mode="Markdown")
+        return await message.answer("⚠️ **يجب عليك الاشتراك في القناة أولاً!**", reply_markup=builder.as_markup(), parse_mode="Markdown")
     
     user_data = get_user(user_id)
     if user_data and user_data[0] and str(user_data[0]).endswith("@gmail.com"):
@@ -226,7 +226,13 @@ async def process_confirm_buy(callback: types.CallbackQuery, state: FSMContext):
     data = await state.get_data()
     if data.get("is_stars", False):
         await state.set_state(BotStates.waiting_for_quantity)
-        await callback.message.edit_text("⭐ **النجوم:** أرسل عدد النجوم (من 50 إلى 1,000,000):", reply_markup=get_back_to_menu_keyboard(), parse_mode="Markdown")
+        await callback.message.edit_text(
+            "⭐ **تحديد كمية النجوم:**\n\n"
+            "أرسل الآن عدد النجوم المطلوب (اكتب الرقم بنفسك):\n"
+            "📌 *(الحد الأدنى: 50 نجمة | الحد الأقصى: 1,000,000 نجمة)*",
+            reply_markup=get_back_to_menu_keyboard(),
+            parse_mode="Markdown"
+        )
     else:
         await state.update_data(quantity=1)
         await state.set_state(BotStates.waiting_for_target)
@@ -237,12 +243,23 @@ async def process_star_quantity(message: types.Message, state: FSMContext):
     try:
         qty = int(message.text.strip())
         if qty < 50 or qty > 1000000:
-            return await message.answer("❌ يرجى إدخال عدد صحيح بين 50 و 1,000,000:")
+            return await message.answer(
+                "❌ **عذراً، العدد المدخل غير مسموح به!**\n\n"
+                "يرجى إدخال عدد صحيح بين **50** و **1,000,000** نجمة:",
+                reply_markup=get_back_to_menu_keyboard(),
+                parse_mode="Markdown"
+            )
+            
         await state.update_data(quantity=qty)
         await state.set_state(BotStates.waiting_for_target)
-        await message.answer(f"✅ تم تحديد {qty} نجمة.\n📥 **أدخل حساب المستهدف الآن:**", parse_mode="Markdown")
+        await message.answer(
+            f"✅ **تم تحديد الكمية:** `{qty} نجمة`\n\n"
+            "📥 **أدخل الآن معرف المستخدم (User ID) أو اليوزر المطلوب الشحن له:**",
+            reply_markup=get_back_to_menu_keyboard(),
+            parse_mode="Markdown"
+        )
     except ValueError:
-        await message.answer("❌ أدخل رقماً صحيحاً فقط:")
+        await message.answer("❌ **قيمة غير صالحة!** يرجى إدخال رقماً صحيحاً فقط (مثلاً: `150` أو `500`):")
 
 @dp.message(BotStates.waiting_for_target)
 async def process_target_id(message: types.Message, state: FSMContext):
@@ -356,7 +373,7 @@ async def admin_manage_pinned_menu(callback: types.CallbackQuery):
     pinned = get_pinned_products()
     builder = InlineKeyboardBuilder()
     for p_id, p_name, p_price, _ in pinned:
-        builder.button(text=f"✏️ تعديل: {p_name[:12]}", callback_data=f"editprice_{p_id}")
+        builder.button(text=f"✏️ تعديل: {str(p_name)[:12]}", callback_data=f"editprice_{p_id}")
         builder.button(text="❌ إزالة", callback_data=f"unpin_{p_id}")
     builder.button(text="🔍 بحث وتثبيت قسم", callback_data="admin_search_start")
     builder.button(text="🔙 عودة", callback_data="admin_panel")
