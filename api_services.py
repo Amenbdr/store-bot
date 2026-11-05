@@ -200,7 +200,6 @@ async def send_order_to_provider(product_id: str, target_info: str, quantity: in
         "Content-Type": "application/json"
     }
     
-    # الهيكل الصحيح حسب توثيق الفوكس ريلود (itemId, quantity, note.username)
     payload = {
         "items": [
             {
