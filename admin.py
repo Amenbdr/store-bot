@@ -3,7 +3,7 @@ from aiogram import types
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from database import get_profit_margin, get_total_users_balances, get_total_consumption
 
-FOXRELOAD_API_KEY = "dmk_SLDMDj7c85zyzMGiCN56JGFYsu0Dyc_cuFL9DWxcpEA"
+FOXRELOAD_API_KEY = "dmk_i5mOcfUakf7MLFFOF3VMWhpEo2btd32SoEgiLOcFBlo"
 
 async def get_foxreload_balance():
     url = "https://public-api.foxreload.com/api/access/me/balances/"
