@@ -12,7 +12,7 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 from database import init_db, get_user, update_user_language, save_user_if_not_exists, get_total_users_count
 from admin import show_admin_panel
 
-TELEGRAM_BOT_TOKEN = "5418318795:AAH3_j69zY52UI6rKO1Fcu9CQnezYcEwQiE"  # ضع توكن بوتك هنا
+TELEGRAM_BOT_TOKEN = "5418318795:AAHKA5Lh4cEdaZZAlTAd4ra7x-hfx80XHVs"  # ضع توكن بوتك هنا
 REQUIRED_CHANNEL = "@SIM_NUMBERS"       # معرف قناتك الإجبارية
 ADMIN_ID = 5396793642                            # ضع الآيدي الخاص بك كأدمن
 
