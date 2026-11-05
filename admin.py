@@ -9,17 +9,14 @@ async def show_admin_panel(callback: types.CallbackQuery, total_users: int):
     
     builder = InlineKeyboardBuilder()
     
-    # 🌐 زر إدارة API المواقع والرصيد الخارجي الجديد
     builder.button(text="🌐 إدارة API المواقع والرصيد", callback_data="admin_apis_menu")
-    
-    # باقي أزرار لوحة الأدمن
+    builder.button(text="📌 إدارة وتثبيت المنتجات", callback_data="admin_manage_pinned")
     builder.button(text="💵 إدارة أرصدة المستخدمين", callback_data="admin_manage_balance")
     builder.button(text="📈 تعديل هامش الربح", callback_data="admin_edit_margin")
     builder.button(text="🔄 تحديث الإحصائيات", callback_data="admin_refresh")
     builder.button(text="🔙 العودة للقائمة الرئيسية", callback_data="back_to_menu")
     
-    # ترتيب الأزرار بشكل عرضي أنيق
-    builder.adjust(1, 2, 1, 1)
+    builder.adjust(1, 1, 2, 1, 1)
     
     admin_text = (
         "⚙️ **لوحة تحكم المشرف (الإدارة العامة)**\n\n"
