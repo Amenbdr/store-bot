@@ -272,7 +272,8 @@ async def process_view_product_details(callback: types.CallbackQuery, state: FSM
         stock_count = "غير متوفر"
     else:
         p_name = product_data.get("name", "خدمة رقمية")
-        p_price = product_data.get("bestOfferPrice") or 0.0
+        # استخراج السعر بذكاء من الحقول المحتملة
+        p_price = float(product_data.get("bestOfferPrice") or product_data.get("price") or product_data.get("retail_price") or 0.0)
         p_desc = product_data.get("description") or "لا توجد تفاصيل إضافية متاحة."
         stock_count = product_data.get("inStockCount", "متاح")
 
@@ -311,20 +312,19 @@ async def process_target_id(message: types.Message, state: FSMContext):
     
     msg = await message.answer("⏳ **جاري إرسال طلبك ومعالجته عبر السيرفر، يرجى الانتظار لحظات...**", parse_mode="Markdown")
     
-    # 1. إنشاء الطلب عبر الـ API
+    # إنشاء الطلب عبر الـ API
     success, result = await send_order_to_provider(product_id, target_info, quantity=1, provider_key="foxreload")
     
     if not success:
         logging.error(f"Order creation failed: {result}")
         return await msg.edit_text("❌ **عذراً، فشل إنشاء الطلب في السيرفر.**\nيرجى التأكد من صحة البيانات المدخلة والمحاولة مرة أخرى.", parse_mode="Markdown")
         
-    # استخراج order_id بدقة من الاستجابة
     order_id = result.get("id") or (result.get("data", {}) if isinstance(result, dict) else {}).get("id")
     if not order_id and isinstance(result, dict):
         order_id = result.get("orderId")
         
     if order_id and isinstance(order_id, str):
-        # 2. دفع الطلب تلقائياً وخصم الرصيد
+        # دفع الطلب تلقائياً وخصم الرصيد
         await msg.edit_text("💳 **جاري إتمام الدفع وخصم القيمة من الرصيد...**", parse_mode="Markdown")
         pay_success, pay_result = await pay_order_in_provider(order_id, "foxreload")
         
@@ -362,7 +362,6 @@ async def process_target_id(message: types.Message, state: FSMContext):
         
     await state.clear()
 
-# فحص الطلب وجلب الأكواد
 @dp.callback_query(F.data.startswith("checkorder_"))
 async def process_check_order_status(callback: types.CallbackQuery):
     order_id = callback.data.split("_")[1]
@@ -409,7 +408,6 @@ async def process_admin_panel(callback: types.CallbackQuery):
 async def process_admin_refresh(callback: types.CallbackQuery):
     await show_admin_panel(callback, get_total_users_count())
 
-# 1. إدارة ومتابعة أرصدة ومفاتيح API المواقع
 @dp.callback_query(F.data == "admin_apis_menu")
 async def admin_apis_menu(callback: types.CallbackQuery):
     if callback.from_user.id != ADMIN_ID:
@@ -476,7 +474,6 @@ async def save_new_api_key(message: types.Message, state: FSMContext):
     
     await message.answer("✅ **تم تحديث مفتاح الـ API بنجاح!**", reply_markup=builder.as_markup(), parse_mode="Markdown")
 
-# 2. قسم إدارة وتثبيت المنتجات والبحث عنها
 @dp.callback_query(F.data == "admin_manage_pinned")
 async def admin_manage_pinned_menu(callback: types.CallbackQuery, state: FSMContext):
     if callback.from_user.id != ADMIN_ID:
@@ -518,7 +515,8 @@ async def admin_process_search(message: types.Message, state: FSMContext):
     builder = InlineKeyboardBuilder()
     for idx, item in enumerate(results[:10]):
         item_name = item.get("name", "منتج")
-        price = item.get("bestOfferPrice") or 0.0
+        # استخراج السعر بذكاء لحل مشكلة 0.0$
+        price = float(item.get("bestOfferPrice") or item.get("price") or item.get("retail_price") or 0.0)
         builder.button(text=f"📌 تثبيت: {item_name} ({price}$)", callback_data=f"pinidx_{idx}")
         
     builder.button(text="🔙 عودة", callback_data="admin_manage_pinned")
@@ -541,7 +539,7 @@ async def process_pin_by_index(callback: types.CallbackQuery, state: FSMContext)
     item = results[idx]
     p_id = str(item.get("id"))
     p_name = str(item.get("name", "خدمة"))
-    price = float(item.get("bestOfferPrice") or 0.0)
+    price = float(item.get("bestOfferPrice") or item.get("price") or item.get("retail_price") or 0.0)
     description = str(item.get("description") or "لا توجد تفاصيل.")
     
     pin_product(p_id, p_name, price, description)
@@ -575,7 +573,6 @@ async def process_unpin_product(callback: types.CallbackQuery):
     
     await callback.message.edit_text("📌 **قائمة المنتجات المثبتة الحالية:**", reply_markup=builder.as_markup())
 
-# 3. إدارة الأرصدة وهامش الربح
 @dp.callback_query(F.data == "admin_edit_margin")
 async def process_edit_margin(callback: types.CallbackQuery, state: FSMContext):
     if callback.from_user.id != ADMIN_ID:
