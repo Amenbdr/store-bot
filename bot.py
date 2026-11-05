@@ -570,38 +570,40 @@ async def admin_process_search(message: types.Message, state: FSMContext):
     if not results:
         return await message.answer("❌ لم يتم العثور على أي منتج يطابق بحثك. حاول بكلمة أخرى:")
         
-    await state.update_data(search_results=results)
     builder = InlineKeyboardBuilder()
-    for idx, item in enumerate(results[:10]):
-        item_name = item.get("name", "منتج")
+    for item in results[:10]:
+        item_id = str(item.get("id"))
+        item_name = str(item.get("name", "منتج"))
         price = float(item.get("bestOfferPrice") or item.get("price") or item.get("retail_price") or 0.0)
-        builder.button(text=f"📌 تثبيت كقسم: {item_name} ({price}$)", callback_data=f"pinidx_{idx}")
+        
+        # 🟢 استخدام معرف المنتج المباشر لتلافي مشكلة صلاحية الذاكرة المؤقتة نهائياً
+        callback_data = f"pinid_{item_id}"
+        builder.button(text=f"📌 تثبيت كقسم: {item_name} ({price}$)", callback_data=callback_data)
         
     builder.button(text="🔙 عودة", callback_data="admin_manage_pinned")
     builder.adjust(1)
     
-    await message.answer("🔎 **نتائج البحث المطابقة:**", reply_markup=builder.as_markup(), parse_mode="Markdown")
+    await message.answer("🔎 **نتائج البحث المطابقة (اضغط للتثبيت الفوري):**", reply_markup=builder.as_markup(), parse_mode="Markdown")
     await state.clear()
 
-@dp.callback_query(F.data.startswith("pinidx_"))
-async def process_pin_by_index(callback: types.CallbackQuery, state: FSMContext):
+@dp.callback_query(F.data.startswith("pinid_"))
+async def process_pin_direct(callback: types.CallbackQuery):
     if callback.from_user.id != ADMIN_ID:
         return
-    idx = int(callback.data.split("_")[1])
-    data = await state.get_data()
-    results = data.get("search_results", [])
+    p_id = callback.data.split("_")[1]
     
-    if idx >= len(results):
-        return await callback.answer("❌ انتهت صلاحية النتائج، أعد البحث.", show_alert=True)
+    await callback.answer("⏳ جاري جلب بيانات المنتج وتثبيته...", show_alert=False)
+    product_data = await get_product_details_from_provider(p_id)
+    
+    if not product_data:
+        return await callback.answer("❌ تعذر جلب تفاصيل المنتج من السيرفر.", show_alert=True)
         
-    item = results[idx]
-    p_id = str(item.get("id"))
-    p_name = str(item.get("name", "خدمة"))
-    price = float(item.get("bestOfferPrice") or item.get("price") or item.get("retail_price") or 0.0)
-    description = str(item.get("description") or "لا توجد تفاصيل.")
+    p_name = str(product_data.get("name", "خدمة"))
+    price = float(product_data.get("bestOfferPrice") or product_data.get("price") or product_data.get("retail_price") or 0.0)
+    description = str(product_data.get("description") or "لا توجد تفاصيل.")
     
     pin_product(p_id, p_name, price, description)
-    await callback.answer("✅ تم تثبيت القسم والمنتج بنجاح!", show_alert=True)
+    await callback.answer("✅ تم تثبيت القسم والمنتج بنجاح تام!", show_alert=True)
     
     pinned = get_pinned_products()
     builder = InlineKeyboardBuilder()
@@ -700,7 +702,7 @@ async def admin_receive_amount(message: types.Message, state: FSMContext):
 
 async def main():
     init_db()
-    logging.info("Bot fully operational with sections, custom pricing, and FoxReload API.")
+    logging.info("Bot fully operational with fixed direct ID pinning, sections, and FoxReload API.")
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
