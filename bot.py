@@ -14,11 +14,13 @@ from database import (
 )
 from admin import show_admin_panel
 from api_services import (
-    SERVICES_CATALOG, send_order_to_provider, get_all_providers, 
-    check_provider_balance, update_provider_api_key, get_provider_config
+    get_pinned_products, pin_product, unpin_product, search_products_from_provider,
+    get_product_details_from_provider, send_order_to_provider, pay_order_in_provider,
+    get_order_status_from_provider, get_all_providers, check_provider_balance, 
+    update_provider_api_key, get_provider_config
 )
 
-TELEGRAM_BOT_TOKEN = "5418318795:AAHKA5Lh4cEdaZZAlTAd4ra7x-hfx80XHVs"
+TELEGRAM_BOT_TOKEN = "YOUR_TELEGRAM_BOT_TOKEN"
 REQUIRED_CHANNEL = "@SIM_NUMBERS"          # قناة الاشتراك الإجباري
 ORDERS_LOG_CHANNEL = "@SPEDERCH"           # قناة الطلبات العامة المشفرة
 ADMIN_ID = 5396793642                      # الآيدي الخاص بك
@@ -36,6 +38,7 @@ class BotStates(StatesGroup):
     admin_get_user = State()
     admin_get_amount = State()
     waiting_for_new_api_key = State()
+    admin_searching_product = State()
 
 def mask_target_info(info: str) -> str:
     info = str(info).strip()
@@ -69,10 +72,15 @@ async def cmd_start(message: types.Message, state: FSMContext):
     
     if not await check_subscription(user_id):
         builder = InlineKeyboardBuilder()
-        builder.button(text="📢 اشترك في القناة الرسمية", url=f"https://t.me/{REQUIRED_CHANNEL.replace('@', '')}")
+        builder.button(text="SIM_NUMBERS✅", url="https://t.me/SIM_NUMBERS")
         builder.button(text="🔄 تحقق من الاشتراك", callback_data="check_sub")
         builder.adjust(1)
-        return await message.answer("⚠️ يجب عليك الاشتراك في قناة البوت أولاً لتتمكن من استخدامه!", reply_markup=builder.as_markup())
+        return await message.answer(
+            "⚠️ **يجب عليك الاشتراك في قناة البوت أولاً لتتمكن من استخدامه!**\n\n"
+            "يرجى الضغط على الزر أدناه للاشتراك:", 
+            reply_markup=builder.as_markup(),
+            parse_mode="Markdown"
+        )
     
     await show_language_selection(message)
 
@@ -100,7 +108,6 @@ async def show_language_selection(message_or_callback):
 async def process_language_selection(callback: types.CallbackQuery, state: FSMContext):
     lang = callback.data.split("_")[1]
     user_id = callback.from_user.id
-    
     update_user_language(user_id, lang)
     
     user_data = get_user(user_id)
@@ -152,7 +159,7 @@ async def show_main_menu(event: types.Message | types.CallbackQuery, lang: str):
     
     builder = InlineKeyboardBuilder()
     if lang == "ar":
-        builder.button(text="⭐ خدمات تليجرام", callback_data="telegram_services")
+        builder.button(text="⭐ خدمات تليجرام الرقمية", callback_data="telegram_services")
         builder.button(text="💳 شحن الرصيد", url=f"https://t.me/{OWNER_USERNAME}")
         builder.button(text="📋 سجل طلباتي", callback_data="my_orders_log")
         builder.button(text="📧 تعديل بياناتي", callback_data="set_email")
@@ -228,35 +235,67 @@ async def show_user_activity_history(callback: types.CallbackQuery):
         
     await callback.message.edit_text(log_text, reply_markup=builder.as_markup(), parse_mode="Markdown")
 
-# --- قائمة الخدمات والاشتراكات ---
+# --- واجهة المستخدم لعرض المنتجات المثبتة ---
 @dp.callback_query(F.data == "telegram_services")
 async def process_telegram_services(callback: types.CallbackQuery):
+    pinned = get_pinned_products()
     builder = InlineKeyboardBuilder()
-    for code, info in SERVICES_CATALOG.items():
-        builder.button(text=info["name"], callback_data=f"service_{code}")
+    
+    if pinned:
+        for p_id, p_name, p_price, _ in pinned:
+            builder.button(text=f"{p_name} — 💰 {p_price}$", callback_data=f"viewprod_{p_id}")
+    else:
+        builder.button(text="⚠️ لا توجد خدمات مثبتة حالياً من الإدارة", callback_data="none")
+        
     builder.button(text="🔙 العودة", callback_data="back_to_menu")
     builder.adjust(1)
     
     text = (
-        "⭐ **خدمات تليجرام المميزة والاشتراكات**\n\n"
-        "يرجى اختيار الخدمة أو مدة الاشتراك التي ترغب في الحصول عليها من القائمة أدناه:\n"
-        "*(جميع الطلبات تتم معالجتها فورياً وبشكل آمن ⚡)*"
+        "⭐ **الخدمات الرقمية والاشتراكات المتاحة**\n\n"
+        "اختر الخدمة للاطلاع على التفاصيل والسعر الحقيقي:"
     )
     await callback.message.edit_text(text, reply_markup=builder.as_markup(), parse_mode="Markdown")
 
-@dp.callback_query(F.data.startswith("service_"))
-async def ask_for_target_id(callback: types.CallbackQuery, state: FSMContext):
-    service_code = callback.data.split("_")[1]
-    service_info = SERVICES_CATALOG.get(service_code)
+@dp.callback_query(F.data.startswith("viewprod_"))
+async def process_view_product_details(callback: types.CallbackQuery, state: FSMContext):
+    p_id = callback.data.split("_")[1]
     
-    if not service_info:
-        return await callback.answer("❌ عذراً، هذه الخدمة غير متوفرة حالياً.", show_alert=True)
-        
-    await state.update_data(service_code=service_code, service_name=service_info["name"])
+    await callback.answer("⏳ جاري جلب التفاصيل الحية من السيرفر...", show_alert=False)
+    product_data = await get_product_details_from_provider(p_id)
+    
+    if not product_data:
+        pinned = get_pinned_products()
+        selected_product = next((p for p in pinned if p[0] == p_id), None)
+        if not selected_product:
+            return await callback.answer("❌ عذراً، لم نتمكن من جلب تفاصيل المنتج.", show_alert=True)
+        _, p_name, p_price, p_desc = selected_product
+        stock_count = "غير متوفر"
+    else:
+        p_name = product_data.get("name", "خدمة رقمية")
+        p_price = product_data.get("bestOfferPrice") or 0.0
+        p_desc = product_data.get("description") or "لا توجد تفاصيل إضافية متاحة."
+        stock_count = product_data.get("inStockCount", "متاح")
+
+    await state.update_data(product_id=p_id, service_name=p_name, service_price=p_price)
+    
+    builder = InlineKeyboardBuilder()
+    builder.button(text="🛒 شراء وتأكيد الطلب", callback_data="confirm_buy_step")
+    builder.button(text="🔙 العودة للخدمات", callback_data="telegram_services")
+    builder.adjust(1)
+    
+    text = (
+        f"📦 **اسم الخدمة:** `{p_name}`\n\n"
+        f"💰 **السعر الحقيقي:** `{p_price}$`\n"
+        f"📦 **المخزون المتوفر:** `{stock_count}`\n\n"
+        f"📝 **التفاصيل:**\n{p_desc}\n\n"
+        "اضغط على زر الشراء أدناه لإدخال المعرف أو اليوزر المطلوب:"
+    )
+    await callback.message.edit_text(text, reply_markup=builder.as_markup(), parse_mode="Markdown")
+
+@dp.callback_query(F.data == "confirm_buy_step")
+async def process_confirm_buy(callback: types.CallbackQuery, state: FSMContext):
     await state.set_state(BotStates.waiting_for_target)
-    
     await callback.message.edit_text(
-        f"📦 **الخدمة المختارة:** {service_info['name']}\n\n"
         "📥 **أدخل معرف المستخدم (User ID) أو اليوزر المراد الشحن له:**",
         parse_mode="Markdown"
     )
@@ -266,50 +305,100 @@ async def process_target_id(message: types.Message, state: FSMContext):
     target_info = message.text.strip()
     data = await state.get_data()
     
-    service_code = data.get("service_code")
-    service_name = data.get("service_name", "خدمة تليجرام")
+    product_id = data.get("product_id")
+    service_name = data.get("service_name", "خدمة رقمية")
+    service_price = data.get("service_price", 1.0)
     
-    await message.answer("⏳ جاري معالجة طلبك، يرجى الانتظار...")
-    success, result = await send_order_to_provider(service_code, target_info)
+    msg = await message.answer("⏳ **جاري إرسال طلبك ومعالجته عبر السيرفر، يرجى الانتظار لحظات...**", parse_mode="Markdown")
     
-    if success:
-        order_cost = 1.0 
-        log_user_activity(message.from_user.id, service_name, target_info, order_cost)
-        masked_target = mask_target_info(target_info)
+    # 1. إنشاء الطلب عبر الـ API
+    success, result = await send_order_to_provider(product_id, target_info, quantity=1, provider_key="foxreload")
+    
+    if not success:
+        logging.error(f"Order creation failed: {result}")
+        return await msg.edit_text("❌ **عذراً، فشل إنشاء الطلب في السيرفر.**\nيرجى التأكد من صحة البيانات المدخلة والمحاولة مرة أخرى.", parse_mode="Markdown")
         
-        try:
-            log_text = (f"🚀 **عملية شحن ناجحة جديدة!**\n\n📦 الخدمة: `{service_name}`\n"
-                        f"👤 المستهدف: `{masked_target}`\n🟢 الحالة: `مكتمل بنجاح ✅`")
-            await bot.send_message(chat_id=ORDERS_LOG_CHANNEL, text=log_text, parse_mode="Markdown")
-        except Exception as e:
-            logging.error(f"Failed to send log to orders channel: {e}")
+    # استخراج order_id بدقة من الاستجابة
+    order_id = result.get("id") or (result.get("data", {}) if isinstance(result, dict) else {}).get("id")
+    if not order_id and isinstance(result, dict):
+        order_id = result.get("orderId")
         
-        builder = InlineKeyboardBuilder()
-        builder.button(text="🔄 شراء نفس الخدمة مجدداً", callback_data=f"service_{service_code}")
-        builder.button(text="🔙 العودة للقائمة الرئيسية", callback_data="back_to_menu")
-        builder.adjust(1)
+    if order_id and isinstance(order_id, str):
+        # 2. دفع الطلب تلقائياً وخصم الرصيد
+        await msg.edit_text("💳 **جاري إتمام الدفع وخصم القيمة من الرصيد...**", parse_mode="Markdown")
+        pay_success, pay_result = await pay_order_in_provider(order_id, "foxreload")
         
-        await message.answer(
-            f"✅ **تم تنفيذ الطلب بنجاح!**\n\n📦 **الخدمة:** `{service_name}`\n👤 **المستهدف:** `{target_info}`", 
-            reply_markup=builder.as_markup(), parse_mode="Markdown"
-        )
+        if pay_success:
+            log_user_activity(message.from_user.id, service_name, target_info, service_price)
+            masked_target = mask_target_info(target_info)
+            
+            try:
+                log_text = (f"🚀 **عملية شحن ناجحة ومكتملة!**\n\n📦 الخدمة: `{service_name}`\n"
+                            f"👤 المستهدف: `{masked_target}`\n💵 التكلفة: `{service_price}$`\n🟢 الحالة: `مكتمل ودفع بنجاح ✅`")
+                await bot.send_message(chat_id=ORDERS_LOG_CHANNEL, text=log_text, parse_mode="Markdown")
+            except Exception as e:
+                logging.error(f"Failed to send log: {e}")
+            
+            builder = InlineKeyboardBuilder()
+            builder.button(text="🔑 جلب الأكواد / التحقق من الحالة فوراً", callback_data=f"checkorder_{order_id}")
+            builder.button(text="🔄 شراء خدمة أخرى", callback_data="telegram_services")
+            builder.button(text="🔙 القائمة الرئيسية", callback_data="back_to_menu")
+            builder.adjust(1)
+            
+            await msg.edit_text(
+                f"🎉 **مبروك! تم تنفيذ طلبك بنجاح تام ⚡**\n\n"
+                f"📦 **الخدمة:** `{service_name}`\n"
+                f"👤 **المستهدف:** `{target_info}`\n"
+                f"💵 **التكلفة:** `{service_price}$`\n\n"
+                f"✨ **حالة الطلب:** تم استلامه ومعالجته بواسطة السيرفر بنجاح.\n"
+                f"اضغط على الزر أدناه لجلب الأكواد أو تفاصيل التسليم النهائية:",
+                reply_markup=builder.as_markup(),
+                parse_mode="Markdown"
+            )
+        else:
+            await msg.edit_text(f"⚠️ **تم إنشاء الطلب بنجاح، ولكن تعذر إتمام الدفع التلقائي:**\n`{pay_result}`", parse_mode="Markdown")
     else:
-        logging.error(f"Order failed for target {target_info}. API Response: {result}")
+        await msg.edit_text("✅ **تم استلام طلبك، ولكن تعذر جلب معرف الطلب للتحقق الفوري.**", parse_mode="Markdown")
         
-        fail_builder = InlineKeyboardBuilder()
-        fail_builder.button(text="🔄 إعادة المحاولة", callback_data=f"service_{service_code}")
-        fail_builder.button(text="🔙 العودة للقائمة الرئيسية", callback_data="back_to_menu")
-        fail_builder.adjust(1)
-        
-        await message.answer(
-            "❌ **عذراً، لم نتمكن من تنفيذ طلبك في الوقت الحالي.**\n\n"
-            "يرجى التأكد من صحة البيانات التي أدخلتها (اليوزر أو الآيدي) والمحاولة مرة أخرى.\n"
-            "إذا استمرت المشكلة، يرجى المحاولة لاحقاً.",
-            reply_markup=fail_builder.as_markup(), parse_mode="Markdown"
-        )
     await state.clear()
 
-# --- لوحة التحكم الخاصة بالأدمن (شاملة إدارة API المواقع) ---
+# فحص الطلب وجلب الأكواد
+@dp.callback_query(F.data.startswith("checkorder_"))
+async def process_check_order_status(callback: types.CallbackQuery):
+    order_id = callback.data.split("_")[1]
+    
+    await callback.answer("🔄 جاري فحص حالة الطلب من السيرفر...", show_alert=False)
+    order_data = await get_order_status_from_provider(order_id)
+    
+    if not order_data:
+        return await callback.answer("❌ تعذر جلب بيانات الطلب حالياً، حاول مجدداً بعد قليل.", show_alert=True)
+        
+    status = order_data.get("status", "unknown")
+    items = order_data.get("items", [])
+    
+    details_text = f"🔍 **تقرير حالة الطلب المباشر:**\n\n📌 **الحالة العامة:** `{status}`\n\n"
+    for idx, item in enumerate(items, 1):
+        item_name = item.get("name", "خدمة رقمية")
+        item_status = item.get("status", "processing")
+        external_data = item.get("externalData") or item.get("external_data") or "جاري إصدار الأكواد من السيرفر..."
+        
+        details_text += (
+            f"*{idx}. {item_name}*\n"
+            f"🔹 *الحالة الفرعية:* `{item_status}`\n"
+            f"🔑 *الأكواد / البيانات المستلمة:* `{external_data}`\n\n"
+        )
+        
+    builder = InlineKeyboardBuilder()
+    builder.button(text="🔄 تحديث الحالة والأكواد", callback_data=f"checkorder_{order_id}")
+    builder.button(text="🔙 القائمة الرئيسية", callback_data="back_to_menu")
+    builder.adjust(1)
+    
+    try:
+        await callback.message.edit_text(details_text, reply_markup=builder.as_markup(), parse_mode="Markdown")
+    except Exception:
+        pass
+
+# --- أقسام لوحة تحكم الأدمن ---
 @dp.callback_query(F.data == "admin_panel")
 async def process_admin_panel(callback: types.CallbackQuery):
     if callback.from_user.id != ADMIN_ID:
@@ -320,7 +409,7 @@ async def process_admin_panel(callback: types.CallbackQuery):
 async def process_admin_refresh(callback: types.CallbackQuery):
     await show_admin_panel(callback, get_total_users_count())
 
-# زر إدارة API المواقع داخل لوحة الأدمن
+# 1. إدارة ومتابعة أرصدة ومفاتيح API المواقع
 @dp.callback_query(F.data == "admin_apis_menu")
 async def admin_apis_menu(callback: types.CallbackQuery):
     if callback.from_user.id != ADMIN_ID:
@@ -328,7 +417,6 @@ async def admin_apis_menu(callback: types.CallbackQuery):
     
     providers = get_all_providers()
     builder = InlineKeyboardBuilder()
-    
     for p_key, p_name in providers:
         builder.button(text=f"💰 رصيد: {p_name}", callback_data=f"api_bal_{p_key}")
         builder.button(text=f"🔑 تغيير مفتاح: {p_name}", callback_data=f"api_edit_{p_key}")
@@ -337,8 +425,7 @@ async def admin_apis_menu(callback: types.CallbackQuery):
     builder.adjust(1)
     
     await callback.message.edit_text(
-        "🌐 **قسم إدارة API المواقع المرتبطة:**\n\n"
-        "اختر الموقع المطلوب لفحص رصيده الحالي أو تحديث مفتاح الحساب الخاص به:",
+        "🌐 **قسم إدارة API المواقع المرتبطة:**\n\nاختر الموقع المطلوب للفحص أو التحديث:",
         reply_markup=builder.as_markup(),
         parse_mode="Markdown"
     )
@@ -348,8 +435,7 @@ async def process_check_api_balance(callback: types.CallbackQuery):
     if callback.from_user.id != ADMIN_ID:
         return
     provider_key = callback.data.split("_")[2]
-    
-    await callback.answer("⏳ جاري استعلام الرصيد من الموقع...", show_alert=False)
+    await callback.answer("⏳ جاري استعلام الرصيد...", show_alert=False)
     balance_info = await check_provider_balance(provider_key)
     
     builder = InlineKeyboardBuilder()
@@ -357,11 +443,7 @@ async def process_check_api_balance(callback: types.CallbackQuery):
     builder.button(text="🔙 عودة للمواقع", callback_data="admin_apis_menu")
     builder.adjust(1)
     
-    await callback.message.edit_text(
-        f"💰 **رصيد الموقع الحالي:**\n\n`{balance_info}`",
-        reply_markup=builder.as_markup(),
-        parse_mode="Markdown"
-    )
+    await callback.message.edit_text(f"💰 **رصيد الموقع الحالي:**\n\n`{balance_info}`", reply_markup=builder.as_markup(), parse_mode="Markdown")
 
 @dp.callback_query(F.data.startswith("api_edit_"))
 async def process_edit_api_key(callback: types.CallbackQuery, state: FSMContext):
@@ -369,14 +451,11 @@ async def process_edit_api_key(callback: types.CallbackQuery, state: FSMContext)
         return
     provider_key = callback.data.split("_")[2]
     config = get_provider_config(provider_key)
-    
     await state.update_data(editing_provider=provider_key)
     await state.set_state(BotStates.waiting_for_new_api_key)
     
     await callback.message.answer(
-        f"🔑 **تحديث مفتاح الحساب لـ ({config['name']}):**\n\n"
-        f"المفتاح الحالي: `{config['api_key']}`\n\n"
-        "أرسل مفتاح الـ API الجديد في رسالة الآن:",
+        f"🔑 **تحديث مفتاح الحساب لـ ({config['name']}):**\n\nأرسل مفتاح الـ API الجديد في رسالة الآن:",
         parse_mode="Markdown"
     )
 
@@ -395,14 +474,108 @@ async def save_new_api_key(message: types.Message, state: FSMContext):
     builder.button(text="🌐 إدارة API المواقع", callback_data="admin_apis_menu")
     builder.adjust(1)
     
-    await message.answer(
-        "✅ **تم تحديث مفتاح الـ API بنجاح!**\n\n"
-        "تم حفظ المفتاح الجديد وسيتم اعتماده فوراً في جميع طلبات الشحن القادمة.",
-        reply_markup=builder.as_markup(),
-        parse_mode="Markdown"
-    )
+    await message.answer("✅ **تم تحديث مفتاح الـ API بنجاح!**", reply_markup=builder.as_markup(), parse_mode="Markdown")
 
-# --- إدارة الأرصدة وهامش الربح للأدمن ---
+# 2. قسم إدارة وتثبيت المنتجات والبحث عنها
+@dp.callback_query(F.data == "admin_manage_pinned")
+async def admin_manage_pinned_menu(callback: types.CallbackQuery, state: FSMContext):
+    if callback.from_user.id != ADMIN_ID:
+        return await callback.answer("عذراً، للمشرفين فقط.", show_alert=True)
+    
+    pinned = get_pinned_products()
+    builder = InlineKeyboardBuilder()
+    for p_id, p_name, p_price, _ in pinned:
+        builder.button(text=f"❌ إزالة: {p_name} ({p_price}$)", callback_data=f"unpin_{p_id}")
+        
+    builder.button(text="🔍 بحث عن منتج وتثبيته", callback_data="admin_search_start")
+    builder.button(text="🔙 عودة لوحة الأدمن", callback_data="admin_panel")
+    builder.adjust(1)
+    
+    text = "📌 **إدارة المنتجات المثبتة للمستخدمين:**"
+    if not pinned:
+        text += "\n\n(لا توجد منتجات مثبتة حالياً)"
+    await callback.message.edit_text(text, reply_markup=builder.as_markup(), parse_mode="Markdown")
+
+@dp.callback_query(F.data == "admin_search_start")
+async def admin_search_start(callback: types.CallbackQuery, state: FSMContext):
+    if callback.from_user.id != ADMIN_ID:
+        return
+    await state.set_state(BotStates.admin_searching_product)
+    await callback.message.answer("🔍 **أدخل كلمة البحث عن المنتج في السيرفر** (مثلاً: `telegram`, `stars`, `roblox`):", parse_mode="Markdown")
+
+@dp.message(BotStates.admin_searching_product)
+async def admin_process_search(message: types.Message, state: FSMContext):
+    if message.from_user.id != ADMIN_ID:
+        return
+    query = message.text.strip()
+    await message.answer(f"⏳ جاري البحث عن `{query}`...")
+    
+    results = await search_products_from_provider(query)
+    if not results:
+        return await message.answer("❌ لم يتم العثور على أي منتج يطابق بحثك. حاول بكلمة أخرى:")
+        
+    await state.update_data(search_results=results)
+    builder = InlineKeyboardBuilder()
+    for idx, item in enumerate(results[:10]):
+        item_name = item.get("name", "منتج")
+        price = item.get("bestOfferPrice") or 0.0
+        builder.button(text=f"📌 تثبيت: {item_name} ({price}$)", callback_data=f"pinidx_{idx}")
+        
+    builder.button(text="🔙 عودة", callback_data="admin_manage_pinned")
+    builder.adjust(1)
+    
+    await message.answer("🔎 **نتائج البحث المطابقة:**", reply_markup=builder.as_markup(), parse_mode="Markdown")
+    await state.clear()
+
+@dp.callback_query(F.data.startswith("pinidx_"))
+async def process_pin_by_index(callback: types.CallbackQuery, state: FSMContext):
+    if callback.from_user.id != ADMIN_ID:
+        return
+    idx = int(callback.data.split("_")[1])
+    data = await state.get_data()
+    results = data.get("search_results", [])
+    
+    if idx >= len(results):
+        return await callback.answer("❌ انتهت صلاحية النتائج، أعد البحث.", show_alert=True)
+        
+    item = results[idx]
+    p_id = str(item.get("id"))
+    p_name = str(item.get("name", "خدمة"))
+    price = float(item.get("bestOfferPrice") or 0.0)
+    description = str(item.get("description") or "لا توجد تفاصيل.")
+    
+    pin_product(p_id, p_name, price, description)
+    await callback.answer("✅ تم تثبيت المنتج بنجاح!", show_alert=True)
+    
+    pinned = get_pinned_products()
+    builder = InlineKeyboardBuilder()
+    for pid, pname, pval, _ in pinned:
+        builder.button(text=f"❌ إزالة: {pname} ({pval}$)", callback_data=f"unpin_{pid}")
+    builder.button(text="🔍 بحث عن منتج وتثبيته", callback_data="admin_search_start")
+    builder.button(text="🔙 عودة لوحة الأدمن", callback_data="admin_panel")
+    builder.adjust(1)
+    
+    await callback.message.edit_text("📌 **قائمة المنتجات المثبتة الحالية:**", reply_markup=builder.as_markup())
+
+@dp.callback_query(F.data.startswith("unpin_"))
+async def process_unpin_product(callback: types.CallbackQuery):
+    if callback.from_user.id != ADMIN_ID:
+        return
+    p_id = callback.data.split("_")[1]
+    unpin_product(p_id)
+    await callback.answer("🗑️ تمت إزالة التثبيت.", show_alert=True)
+    
+    pinned = get_pinned_products()
+    builder = InlineKeyboardBuilder()
+    for pid, pname, pval, _ in pinned:
+        builder.button(text=f"❌ إزالة: {pname} ({pval}$)", callback_data=f"unpin_{pid}")
+    builder.button(text="🔍 بحث عن منتج وتثبيته", callback_data="admin_search_start")
+    builder.button(text="🔙 عودة لوحة الأدمن", callback_data="admin_panel")
+    builder.adjust(1)
+    
+    await callback.message.edit_text("📌 **قائمة المنتجات المثبتة الحالية:**", reply_markup=builder.as_markup())
+
+# 3. إدارة الأرصدة وهامش الربح
 @dp.callback_query(F.data == "admin_edit_margin")
 async def process_edit_margin(callback: types.CallbackQuery, state: FSMContext):
     if callback.from_user.id != ADMIN_ID:
@@ -432,7 +605,7 @@ async def admin_manage_balance_menu(callback: types.CallbackQuery):
     builder.button(text="➖ خصم رصيد من مستخدم", callback_data="bal_op_sub")
     builder.button(text="🔙 عودة لوحة الأدمن", callback_data="admin_panel")
     builder.adjust(1)
-    await callback.message.edit_text("💵 **إدارة أرصدة العملاء:**\nاختر العملية المطلوبة:", reply_markup=builder.as_markup(), parse_mode="Markdown")
+    await callback.message.edit_text("💵 **إدارة أرصدة العملاء:**", reply_markup=builder.as_markup(), parse_mode="Markdown")
 
 @dp.callback_query(F.data.startswith("bal_op_"))
 async def admin_ask_user(callback: types.CallbackQuery, state: FSMContext):
@@ -470,7 +643,7 @@ async def admin_receive_amount(message: types.Message, state: FSMContext):
 
 async def main():
     init_db()
-    logging.info("Bot started successfully with separated API provider services.")
+    logging.info("Bot fully operational with complete API order & admin features.")
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
