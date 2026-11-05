@@ -17,7 +17,7 @@ from admin import show_admin_panel
 TELEGRAM_BOT_TOKEN = "5418318795:AAHKA5Lh4cEdaZZAlTAd4ra7x-hfx80XHVs"
 REQUIRED_CHANNEL = "@SIM_NUMBERS"       # قناة الاشتراك الإجباري
 ORDERS_LOG_CHANNEL = "@SPEDERCH"    # قناة الطلبات العامة المشفرة
-ADMIN_ID = 123456789
+ADMIN_ID = 5396793642
 FOXRELOAD_API_KEY = "dmk_SLDMDj7c85zyzMGiCN56JGFYsu0Dyc_cuFL9DWxcpEA"
 
 logging.basicConfig(level=logging.INFO)
