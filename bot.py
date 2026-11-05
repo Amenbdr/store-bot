@@ -20,7 +20,7 @@ from api_services import (
     update_provider_api_key, get_provider_config
 )
 
-TELEGRAM_BOT_TOKEN = "YOUR_TELEGRAM_BOT_TOKEN"
+TELEGRAM_BOT_TOKEN = "5418318795:AAGioQ8yj8DkVLiOCaiPv3h-tmaZPJcdecQ"
 REQUIRED_CHANNEL = "@SIM_NUMBERS"          # قناة الاشتراك الإجباري
 ORDERS_LOG_CHANNEL = "@SPEDERCH"           # قناة الطلبات العامة المشفرة
 ADMIN_ID = 5396793642                      # الآيدي الخاص بك
