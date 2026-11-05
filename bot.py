@@ -9,26 +9,18 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from aiohttp import web
 
-from database import (
-    init_db, get_user, save_user_credentials, 
-    get_total_users_count, find_user_by_identifier, 
-    update_user_balance, log_user_activity, get_user_logs
-)
-from admin_panel import show_admin_panel
-from keyboards import (
-    get_main_menu_keyboard, get_back_to_menu_keyboard, 
-    get_order_check_keyboard, get_confirmation_keyboard
-)
 from api_services import (
+    init_api_config_db, get_user, save_user_credentials, 
+    get_total_users_count, find_user_by_identifier, 
+    update_user_balance, log_user_activity, get_user_logs,
     get_pinned_products, pin_product, unpin_product, search_products_from_provider,
     get_product_details_from_provider, send_order_to_provider, pay_order_in_provider,
     get_order_status_from_provider, get_all_providers, check_provider_balance, 
-    update_provider_api_key, get_provider_config
+    update_provider_api_key
 )
 
 TELEGRAM_BOT_TOKEN = "5418318795:AAF5TJs6tg-Z2TzBMbrMK2fogKOAaICv3pA"
 REQUIRED_CHANNEL = "@SIM_NUMBERS"          
-ORDERS_LOG_CHANNEL = "@SPEDERCH"           
 ADMIN_ID = 5396793642                      
 OWNER_USERNAME = "DF00D"                   
 
@@ -48,14 +40,39 @@ class BotStates(StatesGroup):
     waiting_for_new_api_key = State()
     admin_searching_product = State()
 
-def mask_target_info(info: str) -> str:
-    info = str(info).strip()
-    if info.isdigit():
-        if len(info) > 6: return info[:3] + "****" + info[-3:]
-        return "***" + info[-2:] if len(info) > 2 else "****"
-    else:
-        if len(info) > 4: return info[:3] + "****" + info[-2:]
-        return "@****"
+# --- لوحة المفاتيح والأزرار ---
+def get_main_menu_keyboard(is_admin: bool):
+    builder = InlineKeyboardBuilder()
+    builder.button(text="⭐ خدمات واشتراكات تليجرام", callback_data="telegram_services")
+    builder.button(text="🔄 متابعة حالة الطلب", callback_data="check_order_menu")
+    builder.button(text="💳 شحن الرصيد", url=f"https://t.me/{OWNER_USERNAME}")
+    builder.button(text="📋 سجل طلباتي", callback_data="my_orders_log")
+    if is_admin:
+        builder.button(text="⚙️ لوحة تحكم الأدمن", callback_data="admin_panel")
+    builder.adjust(1, 1, 2, 1)
+    return builder.as_markup()
+
+def get_back_to_menu_keyboard():
+    builder = InlineKeyboardBuilder()
+    builder.button(text="🔙 القائمة الرئيسية", callback_data="back_to_menu")
+    return builder.as_markup()
+
+def get_confirmation_keyboard():
+    builder = InlineKeyboardBuilder()
+    builder.button(text="✅ تأكيد وشراء", callback_data="confirm_final_pay")
+    builder.button(text="❌ إلغاء الطلب", callback_data="cancel_final_pay")
+    builder.adjust(1)
+    return builder.as_markup()
+
+def get_admin_main_keyboard():
+    builder = InlineKeyboardBuilder()
+    builder.button(text="🌐 إدارة API المواقع", callback_data="admin_apis_menu")
+    builder.button(text="📌 إدارة الأقسام والأسعار", callback_data="admin_manage_pinned")
+    builder.button(text="💵 إدارة أرصدة العملاء", callback_data="admin_manage_balance")
+    builder.button(text="🔄 تحديث اللوحة", callback_data="admin_refresh")
+    builder.button(text="🔙 القائمة الرئيسية", callback_data="back_to_menu")
+    builder.adjust(1, 1, 1, 2)
+    return builder.as_markup()
 
 async def check_subscription(user_id: int) -> bool:
     try:
@@ -162,22 +179,11 @@ async def process_user_order_id_input(message: types.Message, state: FSMContext)
     details_text = f"🔍 **نتيجة فحص الطلب (`{order_id}`):**\n\n📌 **الحالة:** `{status}`\n\n"
     for idx, item in enumerate(items, 1):
         details_text += f"*{idx}. {item.get('name', 'خدمة')}*\n🔹 *الحالة:* `{item.get('status', 'processing')}`\n🔑 *البيانات:* `{item.get('externalData') or 'قيد المعالجة'}`\n\n"
-    await msg.edit_text(details_text, reply_markup=get_order_check_keyboard(), parse_mode="Markdown")
-
-@dp.callback_query(F.data.startswith("checkorder_"))
-async def process_check_order_status(callback: types.CallbackQuery):
-    order_id = callback.data.split("_")[1]
-    await callback.answer("🔄 جاري الفحص...", show_alert=False)
-    order_data = await get_order_status_from_provider(order_id)
-    if not order_data:
-        return await callback.answer("❌ تعذر جلب بيانات الطلب.", show_alert=True)
-    
-    status = order_data.get("status", "unknown")
-    items = order_data.get("items", [])
-    details_text = f"🔍 **تقرير الطلب (`{order_id}`):**\n\n📌 **الحالة العامة:** `{status}`\n\n"
-    for idx, item in enumerate(items, 1):
-        details_text += f"*{idx}. {item.get('name', 'خدمة')}*\n🔹 *الحالة:* `{item.get('status', 'processing')}`\n🔑 *البيانات:* `{item.get('externalData') or 'قيد المعالجة'}`\n\n"
-    await callback.message.edit_text(details_text, reply_markup=get_order_check_keyboard(), parse_mode="Markdown")
+    builder = InlineKeyboardBuilder()
+    builder.button(text="🔄 فحص طلب آخر", callback_data="check_order_menu")
+    builder.button(text="🔙 القائمة الرئيسية", callback_data="back_to_menu")
+    builder.adjust(1)
+    await msg.edit_text(details_text, reply_markup=builder.as_markup(), parse_mode="Markdown")
 
 @dp.callback_query(F.data == "my_orders_log")
 async def show_user_activity_history(callback: types.CallbackQuery):
@@ -328,12 +334,14 @@ async def cancel_purchase_final(callback: types.CallbackQuery, state: FSMContext
 @dp.callback_query(F.data == "admin_panel")
 async def process_admin_panel(callback: types.CallbackQuery):
     if callback.from_user.id != ADMIN_ID: return
-    await show_admin_panel(callback, get_total_users_count())
+    text = f"⚙️ **لوحة تحكم المشرف (الأدمن)**\n\n👥 **إجمالي المستخدمين:** `{get_total_users_count()}`\n\nاختر القسم:"
+    await callback.message.edit_text(text, reply_markup=get_admin_main_keyboard(), parse_mode="Markdown")
 
 @dp.callback_query(F.data == "admin_refresh")
 async def process_admin_refresh(callback: types.CallbackQuery):
     if callback.from_user.id != ADMIN_ID: return
-    await show_admin_panel(callback, get_total_users_count())
+    text = f"⚙️ **لوحة تحكم المشرف (الأدمن)**\n\n👥 **إجمالي المستخدمين:** `{get_total_users_count()}`\n\nاختر القسم:"
+    await callback.message.edit_text(text, reply_markup=get_admin_main_keyboard(), parse_mode="Markdown")
 
 @dp.callback_query(F.data == "admin_apis_menu")
 async def admin_apis_menu(callback: types.CallbackQuery):
@@ -472,13 +480,13 @@ async def admin_receive_amount(message: types.Message, state: FSMContext):
     except ValueError:
         await message.answer("❌ أدخل رقماً صحيحاً للمبلغ:")
 
-# تشغيل خادم الويب الوهمي لتوافق Render
+# تشغيل خادم الويب الوهمي لتوافق Render ومنع Exited with status 1
 async def handle_ping(request):
     return web.Response(text="Bot is running perfectly on Render!")
 
 async def main():
-    init_db()
-    logging.info("Bot fully operational.")
+    init_api_config_db()
+    logging.info("Bot fully operational with dummy web server.")
     app = web.Application()
     app.router.add_get('/', handle_ping)
     runner = web.AppRunner(app)
@@ -486,6 +494,7 @@ async def main():
     port = int(os.environ.get("PORT", 10000))
     site = web.TCPSite(runner, '0.0.0.0', port)
     await site.start()
+    logging.info(f"Web server started on port {port}.")
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
