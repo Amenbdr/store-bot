@@ -1,6 +1,5 @@
 import asyncio
 import logging
-import aiohttp
 import sqlite3
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command
@@ -14,13 +13,16 @@ from database import (
     find_user_by_identifier, update_user_balance, log_user_activity, get_user_logs
 )
 from admin import show_admin_panel
+from api_services import (
+    SERVICES_CATALOG, send_order_to_provider, get_all_providers, 
+    check_provider_balance, update_provider_api_key, get_provider_config
+)
 
 TELEGRAM_BOT_TOKEN = "5418318795:AAHKA5Lh4cEdaZZAlTAd4ra7x-hfx80XHVs"
 REQUIRED_CHANNEL = "@SIM_NUMBERS"          # قناة الاشتراك الإجباري
-ORDERS_LOG_CHANNEL = "@SPEDERCH"           # قناة الطلبات المشفرة العامة
-ADMIN_ID = 5396793642                      # الآيدي الخاص بك (الأدمن)
-OWNER_USERNAME = "DF00D"                   # معرف المالك لشحن الرصيد
-FOXRELOAD_API_KEY = "dmk_i5mOcfUakf7MLFFOF3VMWhpEo2btd32SoEgiLOcFBlo"
+ORDERS_LOG_CHANNEL = "@SPEDERCH"           # قناة الطلبات العامة المشفرة
+ADMIN_ID = 5396793642                      # الآيدي الخاص بك
+OWNER_USERNAME = "DF00D"                   # معرف المالك لتواصل الشحن
 
 logging.basicConfig(level=logging.INFO)
 bot = Bot(token=TELEGRAM_BOT_TOKEN)
@@ -33,6 +35,7 @@ class BotStates(StatesGroup):
     waiting_for_new_margin = State()
     admin_get_user = State()
     admin_get_amount = State()
+    waiting_for_new_api_key = State()
 
 def mask_target_info(info: str) -> str:
     info = str(info).strip()
@@ -44,34 +47,6 @@ def mask_target_info(info: str) -> str:
         if len(info) > 4:
             return info[:3] + "****" + info[-2:]
         return "@****"
-
-async def send_order_to_foxreload(product_id: str, target_info: str):
-    url = "https://public-api.foxreload.com/api/orders/"
-    headers = {
-        "X-API-Key": FOXRELOAD_API_KEY,
-        "X-Language": "en",
-        "X-Currency": "usd",
-        "Accept": "application/json",
-        "Content-Type": "application/json"
-    }
-    payload = {
-        "items": [
-            {
-                "itemId": product_id,
-                "quantity": 1,
-                "link": target_info
-            }
-        ]
-    }
-    async with aiohttp.ClientSession() as session:
-        try:
-            async with session.post(url, json=payload, headers=headers) as response:
-                res_data = await response.json()
-                if response.status in [200, 201]:
-                    return True, res_data
-                return False, res_data
-        except Exception as e:
-            return False, str(e)
 
 async def check_subscription(user_id: int) -> bool:
     try:
@@ -168,7 +143,6 @@ async def change_email_request(callback: types.CallbackQuery, state: FSMContext)
     await state.set_state(BotStates.waiting_for_email)
     await callback.message.answer("📧 **أدخل بريدك الإلكتروني الجديد (يجب أن ينتهي بـ `@gmail.com`):**", parse_mode="Markdown")
 
-# --- القائمة الرئيسية (لوحة تحكم المستخدم مع زر شحن الرصيد المباشر) ---
 async def show_main_menu(event: types.Message | types.CallbackQuery, lang: str):
     user = event.from_user
     user_data = get_user(user.id)
@@ -179,14 +153,12 @@ async def show_main_menu(event: types.Message | types.CallbackQuery, lang: str):
     builder = InlineKeyboardBuilder()
     if lang == "ar":
         builder.button(text="⭐ خدمات تليجرام", callback_data="telegram_services")
-        builder.button(text="💳 شحن الرصيد", url=f"https://t.me/{OWNER_USERNAME}") # زر شحن الرصيد برابط مباشر
+        builder.button(text="💳 شحن الرصيد", url=f"https://t.me/{OWNER_USERNAME}")
         builder.button(text="📋 سجل طلباتي", callback_data="my_orders_log")
         builder.button(text="📧 تعديل بياناتي", callback_data="set_email")
         builder.button(text="🌐 تغيير اللغة", callback_data="change_lang")
         if is_admin:
             builder.button(text="⚙️ لوحة تحكم الأدمن", callback_data="admin_panel")
-        
-        # ترتيب الأزرار بشكل عرضي أنيق (زرين في كل سطر)
         builder.adjust(2, 2, 2, 1)
         
         text = (
@@ -256,32 +228,35 @@ async def show_user_activity_history(callback: types.CallbackQuery):
         
     await callback.message.edit_text(log_text, reply_markup=builder.as_markup(), parse_mode="Markdown")
 
+# --- قائمة الخدمات والاشتراكات ---
 @dp.callback_query(F.data == "telegram_services")
 async def process_telegram_services(callback: types.CallbackQuery):
     builder = InlineKeyboardBuilder()
-    builder.button(text="⭐ شحن نجوم تليجرام (Stars)", callback_data="service_stars_ID")
-    builder.button(text="💎 اشتراك تليجرام مميز (Premium)", callback_data="service_premium_ID")
+    for code, info in SERVICES_CATALOG.items():
+        builder.button(text=info["name"], callback_data=f"service_{code}")
     builder.button(text="🔙 العودة", callback_data="back_to_menu")
     builder.adjust(1)
     
     text = (
-        "⭐ **خدمات تليجرام المميزة**\n\n"
-        "يرجى اختيار الخدمة التي ترغب في الحصول عليها من القائمة أدناه:\n"
-        "*(جميع طلباتنا تتم معالجتها فورياً وبشكل آمن ⚡)*"
+        "⭐ **خدمات تليجرام المميزة والاشتراكات**\n\n"
+        "يرجى اختيار الخدمة أو مدة الاشتراك التي ترغب في الحصول عليها من القائمة أدناه:\n"
+        "*(جميع الطلبات تتم معالجتها فورياً وبشكل آمن ⚡)*"
     )
     await callback.message.edit_text(text, reply_markup=builder.as_markup(), parse_mode="Markdown")
 
 @dp.callback_query(F.data.startswith("service_"))
 async def ask_for_target_id(callback: types.CallbackQuery, state: FSMContext):
-    service_type = callback.data.split("_")[1]
-    product_id = "YOUR_STARS_PRODUCT_ID" if service_type == "stars" else "YOUR_PREMIUM_PRODUCT_ID"
-    service_name = "⭐ نجوم تليجرام (Stars)" if service_type == "stars" else "💎 اشتراك تليجرام Premium"
+    service_code = callback.data.split("_")[1]
+    service_info = SERVICES_CATALOG.get(service_code)
     
-    await state.update_data(product_id=product_id, service_name=service_name, service_type=service_type)
+    if not service_info:
+        return await callback.answer("❌ عذراً، هذه الخدمة غير متوفرة حالياً.", show_alert=True)
+        
+    await state.update_data(service_code=service_code, service_name=service_info["name"])
     await state.set_state(BotStates.waiting_for_target)
     
     await callback.message.edit_text(
-        f"📦 **الخدمة المختارة:** {service_name}\n\n"
+        f"📦 **الخدمة المختارة:** {service_info['name']}\n\n"
         "📥 **أدخل معرف المستخدم (User ID) أو اليوزر المراد الشحن له:**",
         parse_mode="Markdown"
     )
@@ -291,11 +266,11 @@ async def process_target_id(message: types.Message, state: FSMContext):
     target_info = message.text.strip()
     data = await state.get_data()
     
+    service_code = data.get("service_code")
     service_name = data.get("service_name", "خدمة تليجرام")
-    service_type = data.get("service_type", "stars")
     
     await message.answer("⏳ جاري معالجة طلبك، يرجى الانتظار...")
-    success, result = await send_order_to_foxreload(data.get("product_id"), target_info)
+    success, result = await send_order_to_provider(service_code, target_info)
     
     if success:
         order_cost = 1.0 
@@ -310,7 +285,7 @@ async def process_target_id(message: types.Message, state: FSMContext):
             logging.error(f"Failed to send log to orders channel: {e}")
         
         builder = InlineKeyboardBuilder()
-        builder.button(text="🔄 شراء نفس الخدمة مجدداً", callback_data=f"service_{service_type}_ID")
+        builder.button(text="🔄 شراء نفس الخدمة مجدداً", callback_data=f"service_{service_code}")
         builder.button(text="🔙 العودة للقائمة الرئيسية", callback_data="back_to_menu")
         builder.adjust(1)
         
@@ -319,10 +294,10 @@ async def process_target_id(message: types.Message, state: FSMContext):
             reply_markup=builder.as_markup(), parse_mode="Markdown"
         )
     else:
-        logging.error(f"Order failed for target {target_info}. FoxReload Response: {result}")
+        logging.error(f"Order failed for target {target_info}. API Response: {result}")
         
         fail_builder = InlineKeyboardBuilder()
-        fail_builder.button(text="🔄 إعادة المحاولة", callback_data=f"service_{service_type}_ID")
+        fail_builder.button(text="🔄 إعادة المحاولة", callback_data=f"service_{service_code}")
         fail_builder.button(text="🔙 العودة للقائمة الرئيسية", callback_data="back_to_menu")
         fail_builder.adjust(1)
         
@@ -334,7 +309,7 @@ async def process_target_id(message: types.Message, state: FSMContext):
         )
     await state.clear()
 
-# --- لوحة التحكم الخاصة بالأدمن ---
+# --- لوحة التحكم الخاصة بالأدمن (شاملة إدارة API المواقع) ---
 @dp.callback_query(F.data == "admin_panel")
 async def process_admin_panel(callback: types.CallbackQuery):
     if callback.from_user.id != ADMIN_ID:
@@ -345,6 +320,89 @@ async def process_admin_panel(callback: types.CallbackQuery):
 async def process_admin_refresh(callback: types.CallbackQuery):
     await show_admin_panel(callback, get_total_users_count())
 
+# زر إدارة API المواقع داخل لوحة الأدمن
+@dp.callback_query(F.data == "admin_apis_menu")
+async def admin_apis_menu(callback: types.CallbackQuery):
+    if callback.from_user.id != ADMIN_ID:
+        return await callback.answer("عذراً، للمشرفين فقط.", show_alert=True)
+    
+    providers = get_all_providers()
+    builder = InlineKeyboardBuilder()
+    
+    for p_key, p_name in providers:
+        builder.button(text=f"💰 رصيد: {p_name}", callback_data=f"api_bal_{p_key}")
+        builder.button(text=f"🔑 تغيير مفتاح: {p_name}", callback_data=f"api_edit_{p_key}")
+    
+    builder.button(text="🔙 عودة لوحة الأدمن", callback_data="admin_panel")
+    builder.adjust(1)
+    
+    await callback.message.edit_text(
+        "🌐 **قسم إدارة API المواقع المرتبطة:**\n\n"
+        "اختر الموقع المطلوب لفحص رصيده الحالي أو تحديث مفتاح الحساب الخاص به:",
+        reply_markup=builder.as_markup(),
+        parse_mode="Markdown"
+    )
+
+@dp.callback_query(F.data.startswith("api_bal_"))
+async def process_check_api_balance(callback: types.CallbackQuery):
+    if callback.from_user.id != ADMIN_ID:
+        return
+    provider_key = callback.data.split("_")[2]
+    
+    await callback.answer("⏳ جاري استعلام الرصيد من الموقع...", show_alert=False)
+    balance_info = await check_provider_balance(provider_key)
+    
+    builder = InlineKeyboardBuilder()
+    builder.button(text="🔄 تحديث الفحص", callback_data=f"api_bal_{provider_key}")
+    builder.button(text="🔙 عودة للمواقع", callback_data="admin_apis_menu")
+    builder.adjust(1)
+    
+    await callback.message.edit_text(
+        f"💰 **رصيد الموقع الحالي:**\n\n`{balance_info}`",
+        reply_markup=builder.as_markup(),
+        parse_mode="Markdown"
+    )
+
+@dp.callback_query(F.data.startswith("api_edit_"))
+async def process_edit_api_key(callback: types.CallbackQuery, state: FSMContext):
+    if callback.from_user.id != ADMIN_ID:
+        return
+    provider_key = callback.data.split("_")[2]
+    config = get_provider_config(provider_key)
+    
+    await state.update_data(editing_provider=provider_key)
+    await state.set_state(BotStates.waiting_for_new_api_key)
+    
+    await callback.message.answer(
+        f"🔑 **تحديث مفتاح الحساب لـ ({config['name']}):**\n\n"
+        f"المفتاح الحالي: `{config['api_key']}`\n\n"
+        "أرسل مفتاح الـ API الجديد في رسالة الآن:",
+        parse_mode="Markdown"
+    )
+
+@dp.message(BotStates.waiting_for_new_api_key)
+async def save_new_api_key(message: types.Message, state: FSMContext):
+    if message.from_user.id != ADMIN_ID:
+        return
+    new_key = message.text.strip()
+    data = await state.get_data()
+    provider_key = data.get("editing_provider")
+    
+    update_provider_api_key(provider_key, new_key)
+    await state.clear()
+    
+    builder = InlineKeyboardBuilder()
+    builder.button(text="🌐 إدارة API المواقع", callback_data="admin_apis_menu")
+    builder.adjust(1)
+    
+    await message.answer(
+        "✅ **تم تحديث مفتاح الـ API بنجاح!**\n\n"
+        "تم حفظ المفتاح الجديد وسيتم اعتماده فوراً في جميع طلبات الشحن القادمة.",
+        reply_markup=builder.as_markup(),
+        parse_mode="Markdown"
+    )
+
+# --- إدارة الأرصدة وهامش الربح للأدمن ---
 @dp.callback_query(F.data == "admin_edit_margin")
 async def process_edit_margin(callback: types.CallbackQuery, state: FSMContext):
     if callback.from_user.id != ADMIN_ID:
@@ -412,7 +470,7 @@ async def admin_receive_amount(message: types.Message, state: FSMContext):
 
 async def main():
     init_db()
-    logging.info("Bot started successfully with direct owner recharge button.")
+    logging.info("Bot started successfully with separated API provider services.")
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
