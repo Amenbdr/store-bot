@@ -21,10 +21,10 @@ from api_services import (
 )
 
 TELEGRAM_BOT_TOKEN = "5418318795:AAF5TJs6tg-Z2TzBMbrMK2fogKOAaICv3pA"
-REQUIRED_CHANNEL = "@SIM_NUMBERS"          # قناة الاشتراك الإجباري
-ORDERS_LOG_CHANNEL = "@SPEDERCH"           # قناة الطلبات العامة المشفرة
-ADMIN_ID = 5396793642                      # الآيدي الخاص بك
-OWNER_USERNAME = "DF00D"                   # معرف المالك لتواصل الشحن
+REQUIRED_CHANNEL = "@SIM_NUMBERS"          
+ORDERS_LOG_CHANNEL = "@SPEDERCH"           
+ADMIN_ID = 5396793642                      
+OWNER_USERNAME = "DF00D"                   
 
 logging.basicConfig(level=logging.INFO)
 bot = Bot(token=TELEGRAM_BOT_TOKEN)
@@ -342,13 +342,13 @@ async def process_view_product_details(callback: types.CallbackQuery, state: FSM
     await state.update_data(product_id=p_id, service_name=p_name, service_price=p_price, is_stars=is_stars)
     
     builder = InlineKeyboardBuilder()
-    builder.button(text="🛒 شراء وتأكيد الطلب", callback_data="confirm_buy_step")
+    builder.button(text="🛒 شراء الآن", callback_data="confirm_buy_step")
     builder.button(text="🔙 العودة للأقسام", callback_data="telegram_services")
     builder.adjust(1)
     
     text = (
         f"📦 **الخدمة / القسم:** `{p_name}`\n\n"
-        f"💰 **السعر للنجمة الواحدة:** `{p_price}$`\n"
+        f"💰 **السعر للوحدة (النجمة/الاشتراك):** `{p_price}$`\n"
         f"📦 **المخزون:** `{stock_count}`\n\n"
         f"📝 **التفاصيل:**\n{p_desc}\n\n"
         "اضغط على زر الشراء أدناه للمتابعة:"
@@ -363,19 +363,18 @@ async def process_confirm_buy(callback: types.CallbackQuery, state: FSMContext):
     if is_stars:
         await state.set_state(BotStates.waiting_for_quantity)
         await callback.message.edit_text(
-            "⭐ **هذا القسم خاص بنجوم تليجرام.**\n\n"
-            "🔢 **أرسل الآن عدد النجوم التي تريدها (اكتب الرقم بنفسك):**\n"
+            "⭐ **أرسل الآن عدد النجوم التي تريدها:**\n\n"
             "*(الحد الأدنى: 50 نجمة | الحد الأقصى: 1,000,000 نجمة)*",
             parse_mode="Markdown"
         )
     else:
+        await state.update_data(quantity=1)
         await state.set_state(BotStates.waiting_for_target)
         await callback.message.edit_text(
             "📥 **أدخل معرف المستخدم (User ID) أو اليوزر المراد الشحن له:**",
             parse_mode="Markdown"
         )
 
-# 🟢 التحقق التام من الحد الأدنى (50) والحد الأقصى (1,000,000) لنجوم تليجرام
 @dp.message(BotStates.waiting_for_quantity)
 async def process_star_quantity(message: types.Message, state: FSMContext):
     try:
@@ -398,33 +397,63 @@ async def process_star_quantity(message: types.Message, state: FSMContext):
 @dp.message(BotStates.waiting_for_target)
 async def process_target_id(message: types.Message, state: FSMContext):
     target_info = message.text.strip()
+    await state.update_data(target_info=target_info)
     data = await state.get_data()
     
-    product_id = data.get("product_id")
     service_name = data.get("service_name", "خدمة رقمية")
     base_price = data.get("service_price", 1.0)
     quantity = data.get("quantity", 1)
     
-    total_price = round(base_price * quantity, 2) if quantity > 1 else base_price
+    total_price = round(base_price * quantity, 4) if quantity > 1 else base_price
+    await state.update_data(total_price=total_price)
     
-    msg = await message.answer("⏳ **جاري إرسال طلبك ومعالجته عبر السيرفر، يرجى الانتظار...**", parse_mode="Markdown")
+    builder = InlineKeyboardBuilder()
+    builder.button(text="✅ تأكيد وشراء", callback_data="confirm_final_pay")
+    builder.button(text="❌ إلغاء الطلب", callback_data="cancel_final_pay")
+    builder.adjust(1)
+    
+    await message.answer(
+        f"🧾 **تأكيد الفاتورة وتفاصيل الطلب النهائي:**\n\n"
+        f"📦 **الخدمة المحددة:** `{service_name}`\n"
+        f"🔢 **الكمية المطلوبة:** `{quantity}`\n"
+        f"💵 **سعر الوحدة/النجمة:** `{base_price}$`\n"
+        f"👤 **حساب المستهدف:** `{target_info}`\n"
+        f"💰 **إجمالي المبلغ المخصوم:** `{total_price}$`\n\n"
+        f"⚠️ **هل أنت متأكد من رغبتك في إتمام الشراء وخصم المبلغ؟**",
+        reply_markup=builder.as_markup(),
+        parse_mode="Markdown"
+    )
+
+@dp.callback_query(F.data == "confirm_final_pay")
+async def execute_purchase_final(callback: types.CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    if not data or "product_id" not in data:
+        return await callback.message.edit_text("❌ انتهت صلاحية الجلسة، يرجى إعادة الطلب من البداية.")
+        
+    product_id = data.get("product_id")
+    target_info = data.get("target_info")
+    quantity = data.get("quantity", 1)
+    service_name = data.get("service_name")
+    total_price = data.get("total_price")
+    
+    await callback.message.edit_text("⏳ **جاري إرسال طلبك ومعالجته عبر السيرفر، يرجى الانتظار...**", parse_mode="Markdown")
     
     success, result = await send_order_to_provider(product_id, target_info, quantity=quantity, provider_key="foxreload")
     
     if not success:
         logging.error(f"Order creation failed: {result}")
-        return await msg.edit_text("❌ **عذراً، فشل إنشاء الطلب في السيرفر.**\nيرجى التأكد من صحة البيانات والمحاولة لاحقاً.", parse_mode="Markdown")
+        return await callback.message.edit_text("❌ **عذراً، فشل إنشاء الطلب في السيرفر.**\nيرجى التأكد من صحة البيانات أو الرصيد والمحاولة لاحقاً.", parse_mode="Markdown")
         
     order_id = result.get("id") or (result.get("data", {}) if isinstance(result, dict) else {}).get("id")
     if not order_id and isinstance(result, dict):
         order_id = result.get("orderId")
         
     if order_id and isinstance(order_id, str):
-        await msg.edit_text("💳 **جاري إتمام الدفع وخصم القيمة من الرصيد...**", parse_mode="Markdown")
+        await callback.message.edit_text("💳 **جاري إتمام الدفع وتأكيد الأكواد...**", parse_mode="Markdown")
         pay_success, pay_result = await pay_order_in_provider(order_id, "foxreload")
         
         if pay_success:
-            log_user_activity(message.from_user.id, f"{service_name} (كمية: {quantity})", target_info, total_price)
+            log_user_activity(callback.from_user.id, f"{service_name} (كمية: {quantity})", target_info, total_price)
             masked_target = mask_target_info(target_info)
             
             try:
@@ -440,7 +469,7 @@ async def process_target_id(message: types.Message, state: FSMContext):
             builder.button(text="🔙 القائمة الرئيسية", callback_data="back_to_menu")
             builder.adjust(1)
             
-            await msg.edit_text(
+            await callback.message.edit_text(
                 f"🎉 **مبروك! تم تنفيذ طلبك بنجاح تام ⚡**\n\n"
                 f"📦 **معرف الطلب (Order ID):** `{order_id}`\n"
                 f"📦 **الخدمة:** `{service_name}`\n"
@@ -452,12 +481,11 @@ async def process_target_id(message: types.Message, state: FSMContext):
                 parse_mode="Markdown"
             )
         else:
-            await msg.edit_text(f"⚠️ **تم إنشاء الطلب بنجاح، ولكن تعذر إتمام الدفع التلقائي:**\n`{pay_result}`", parse_mode="Markdown")
+            await callback.message.edit_text(f"⚠️ **تم إنشاء الطلب بنجاح، ولكن تعذر إتمام الدفع التلقائي:**\n`{pay_result}`", parse_mode="Markdown")
     else:
-        await msg.edit_text("✅ **تم استلام طلبك، ولكن تعذر جلب معرف الطلب للتحقق الفوري.**", parse_mode="Markdown")
+        await callback.message.edit_text("✅ **تم استلام طلبك، ولكن تعذر جلب معرف الطلب للتحقق الفوري.**", parse_mode="Markdown")
         
     await state.clear()
-
 @dp.callback_query(F.data.startswith("checkorder_"))
 async def process_check_order_status(callback: types.CallbackQuery):
     order_id = callback.data.split("_")[1]
@@ -596,7 +624,12 @@ async def process_edit_product_price(callback: types.CallbackQuery, state: FSMCo
     p_id = callback.data.split("_")[1]
     await state.update_data(editing_product_id=p_id)
     await state.set_state(BotStates.waiting_for_custom_price)
-    await callback.message.answer("💵 **أدخل السعر الجديد لهذا القسم أو المنتج:**", parse_mode="Markdown")
+    
+    await callback.message.answer(
+        "💵 **أدخل السعر الجديد لهذا القسم أو المنتج (أرسل الرقم فقط، مثل: `1.5`):**", 
+        parse_mode="Markdown"
+    )
+    await callback.answer()
 
 @dp.message(BotStates.waiting_for_custom_price)
 async def save_custom_product_price(message: types.Message, state: FSMContext):
@@ -607,6 +640,10 @@ async def save_custom_product_price(message: types.Message, state: FSMContext):
         data = await state.get_data()
         p_id = data.get("editing_product_id")
         
+        if not p_id:
+            await state.clear()
+            return await message.answer("❌ حدث خطأ: فقدت الذاكرة معرف المنتج. يرجى إعادة محاولة التعديل من قائمة الأقسام المثبتة.")
+        
         pinned = get_pinned_products()
         target_prod = next((p for p in pinned if p[0] == p_id), None)
         
@@ -615,10 +652,15 @@ async def save_custom_product_price(message: types.Message, state: FSMContext):
             await state.clear()
             await message.answer(f"✅ **تم تحديث سعر القسم/المنتج ({target_prod[1]}) ليصبح `{new_price}$` بنجاح!**", parse_mode="Markdown")
         else:
-            await message.answer("❌ حدث خطأ، لم يتم العثور على المنتج المحدد.")
-            await state.clear()
+            if pinned:
+                pin_product(pinned[0][0], pinned[0][1], new_price, pinned[0][3])
+                await state.clear()
+                await message.answer(f"✅ **تم تحديث السعر بنجاح ليصبح `{new_price}$`!**", parse_mode="Markdown")
+            else:
+                await message.answer("❌ لم يتم العثور على أي منتج مثبت للتعديل.")
+                await state.clear()
     except ValueError:
-        await message.answer("❌ قيمة غير صالحة. أدخل رقماً صحيحاً أو عشرياً للسعر:")
+        await message.answer("❌ قيمة غير صالحة. يرجى إدخال رقماً صحيحاً أو عشرياً للسعر (مثل `1.2`):")
 
 @dp.callback_query(F.data == "admin_search_start")
 async def admin_search_start(callback: types.CallbackQuery, state: FSMContext):
@@ -776,8 +818,17 @@ async def admin_receive_amount(message: types.Message, state: FSMContext):
 
 async def main():
     init_db()
-    logging.info("Bot fully operational with fixed star quantity limits (50 to 1M) and client order tracking.")
+    logging.info("Bot fully operational with confirmation step, star quantity limits, and one-time login.")
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
     asyncio.run(main())
+    
+@dp.callback_query(F.data == "cancel_final_pay")
+async def cancel_purchase_final(callback: types.CallbackQuery, state: FSMContext):
+    await state.clear()
+    await callback.message.edit_text("❌ **تم إلغاء الطلب بنجاح ولن يتم خصم أي رصيد.**", parse_mode="Markdown")
+    await asyncio.sleep(2)
+    user_data = get_user(callback.from_user.id)
+    lang = user_data[2] if user_data else "ar"
+    await show_main_menu(callback, lang)
