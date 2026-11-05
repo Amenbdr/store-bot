@@ -85,7 +85,7 @@ def unpin_product(product_id: str):
     conn.commit()
     conn.close()
 
-# --- التحديث الذكي لدالة البحث لضمان العثور على المنتجات ---
+# --- التحديث الذكي لدالة البحث لضمان العثور على المنتجات وتفادي أخطاء الـ القوائم ---
 async def search_products_from_provider(query: str, provider_key: str = "foxreload"):
     config = get_provider_config(provider_key)
     if not config:
@@ -106,17 +106,31 @@ async def search_products_from_provider(query: str, provider_key: str = "foxrelo
             async with session.get(search_url, headers=headers) as response:
                 if response.status == 200:
                     data = await response.json()
-                    results = data.get("items", []) or data.get("data", [])
                     
-                    # إذا أرجع الموقع نتيجة فارغة []، يتم استخدام محرك البحث الذكي المحلي
+                    # التحقق من نوع البيانات القادمة من السيرفر لتفادي خطأ (list object has no attribute get)
+                    if isinstance(data, list):
+                        results = data
+                    elif isinstance(data, dict):
+                        results = data.get("items", []) or data.get("data", [])
+                    else:
+                        results = []
+                    
+                    # إذا أرجع الموقع نتيجة فارغة، يتم استخدام محرك البحث الذكي المحلي كبديل (Fallback)
                     if not results:
-                        logging.info("API search returned []. Using smart local search fall-back...")
+                        logging.info("API search returned empty. Using smart local search fall-back...")
                         all_url = f"{config['base_url']}/api/products/"
                         async with session.get(all_url, headers=headers) as all_res:
                             if all_res.status == 200:
                                 all_data = await all_res.json()
-                                all_items = all_data.get("items", []) or all_data.get("data", [])
-                                # فلترة النتائج لضمان العثور على الكلمة
+                                
+                                if isinstance(all_data, list):
+                                    all_items = all_data
+                                elif isinstance(all_data, dict):
+                                    all_items = all_data.get("items", []) or all_data.get("data", [])
+                                else:
+                                    all_items = []
+                                    
+                                # فلترة النتائج لضمان العثور على الكلمة المطلوبة
                                 results = [
                                     item for item in all_items 
                                     if query.lower() in str(item.get("name", "")).lower()
