@@ -21,7 +21,6 @@ def init_api_config_db():
             description TEXT DEFAULT ''
         )
     """)
-    # إضافة الإعدادات الافتراضية
     cursor.execute("""
         INSERT OR IGNORE INTO api_providers (provider_key, provider_name, api_key, base_url)
         VALUES ('foxreload', 'FoxReload API', 'dmk_SLDMDj7c85zyzMGiCN56JGFYsu0Dyc_cuFL9DWxcpEA', 'https://public-api.foxreload.com')
@@ -92,7 +91,7 @@ async def search_products_from_provider(query: str, provider_key: str = "foxrelo
     
     headers = {
         "X-API-Key": config["api_key"],
-        "X-Language": "en", # ضبط اللغة على الإنجليزية لضمان مطابقة نتائج البحث الأساسية
+        "X-Language": "en",
         "X-Currency": "usd",
         "Accept": "application/json"
     }
@@ -200,12 +199,16 @@ async def send_order_to_provider(product_id: str, target_info: str, quantity: in
         "Accept": "application/json",
         "Content-Type": "application/json"
     }
+    
+    # الهيكل الصحيح حسب توثيق الفوكس ريلود (itemId, quantity, note.username)
     payload = {
         "items": [
             {
                 "itemId": product_id,
                 "quantity": quantity,
-                "link": target_info
+                "note": {
+                    "username": target_info
+                }
             }
         ]
     }
