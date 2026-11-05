@@ -20,7 +20,7 @@ from api_services import (
     update_provider_api_key, get_provider_config
 )
 
-TELEGRAM_BOT_TOKEN = "5418318795:AAGioQ8yj8DkVLiOCaiPv3h-tmaZPJcdecQ"
+TELEGRAM_BOT_TOKEN = "YOUR_TELEGRAM_BOT_TOKEN"
 REQUIRED_CHANNEL = "@SIM_NUMBERS"          # قناة الاشتراك الإجباري
 ORDERS_LOG_CHANNEL = "@SPEDERCH"           # قناة الطلبات العامة المشفرة
 ADMIN_ID = 5396793642                      # الآيدي الخاص بك
@@ -37,6 +37,7 @@ class BotStates(StatesGroup):
     waiting_for_quantity = State()
     waiting_for_new_margin = State()
     waiting_for_custom_price = State()
+    waiting_for_order_id = State() # 🟢 حالة تتبع وإدخال آيدي الطلب للفحص
     admin_get_user = State()
     admin_get_amount = State()
     waiting_for_new_api_key = State()
@@ -84,14 +85,25 @@ async def cmd_start(message: types.Message, state: FSMContext):
             parse_mode="Markdown"
         )
     
-    await show_language_selection(message)
+    # تحقق مما إذا كان المستخدم قد سجل دخوله مسبقاً (تسجيل لمرة واحدة)
+    user_data = get_user(user_id)
+    if user_data and user_data[0] and str(user_data[0]).endswith("@gmail.com"):
+        lang = user_data[2] if user_data else "ar"
+        await show_main_menu(message, lang)
+    else:
+        await show_language_selection(message)
 
 @dp.callback_query(F.data == "check_sub")
 async def process_check_sub(callback: types.CallbackQuery, state: FSMContext):
     user_id = callback.from_user.id
     if await check_subscription(user_id):
         await callback.message.delete()
-        await show_language_selection(callback)
+        user_data = get_user(user_id)
+        if user_data and user_data[0] and str(user_data[0]).endswith("@gmail.com"):
+            lang = user_data[2] if user_data else "ar"
+            await show_main_menu(callback, lang)
+        else:
+            await show_language_selection(callback)
     else:
         await callback.answer("❌ لم تقم بالاشتراك في القناة بعد!", show_alert=True)
 
@@ -112,19 +124,15 @@ async def process_language_selection(callback: types.CallbackQuery, state: FSMCo
     user_id = callback.from_user.id
     update_user_language(user_id, lang)
     
-    user_data = get_user(user_id)
-    if not user_data or not user_data[0] or not user_data[0].endswith("@gmail.com"):
-        await state.set_state(BotStates.waiting_for_email)
-        text = (
-            "⚠️ **يجب عليك تسجيل حسابك أولاً لتتمكن من الدخول واستخدام البوت.**\n\n"
-            "📧 **أدخل بريدك الإلكتروني (يجب أن ينتهي بـ `@gmail.com`):**"
-            if lang == "ar" else 
-            "⚠️ **You must register your account first to use the bot.**\n\n"
-            "📧 **Enter your email (must end with `@gmail.com`):**"
-        )
-        await callback.message.edit_text(text, parse_mode="Markdown")
-    else:
-        await show_main_menu(callback, lang)
+    await state.set_state(BotStates.waiting_for_email)
+    text = (
+        "⚠️ **مرحباً بك! يرجى تسجيل حسابك لمرة واحدة فقط لتتمكن من استخدام البوت.**\n\n"
+        "📧 **أدخل بريدك الإلكتروني (يجب أن ينتهي بـ `@gmail.com`):**"
+        if lang == "ar" else 
+        "⚠️ **Welcome! Please register your account once to use the bot.**\n\n"
+        "📧 **Enter your email (must end with `@gmail.com`):**"
+    )
+    await callback.message.edit_text(text, parse_mode="Markdown")
 
 @dp.message(BotStates.waiting_for_email)
 async def process_user_email(message: types.Message, state: FSMContext):
@@ -133,16 +141,19 @@ async def process_user_email(message: types.Message, state: FSMContext):
         return await message.answer("❌ **عذراً، يجب أن ينتهي البريد بـ `@gmail.com`. حاول مجدداً:**", parse_mode="Markdown")
     await state.update_data(email=email)
     await state.set_state(BotStates.waiting_for_password)
-    await message.answer("🔑 **أدخل كلمة المرور الخاصة بحسابك:**", parse_mode="Markdown")
+    await message.answer("🔑 **أدخل كلمة المرور الخاصة بحسابك للتحقق وتأكيد التسجيل:**", parse_mode="Markdown")
 
 @dp.message(BotStates.waiting_for_password)
 async def process_user_password(message: types.Message, state: FSMContext):
     password = message.text.strip()
+    if len(password) < 4:
+        return await message.answer("❌ كلمة المرور قصيرة جداً. أدخل كلمة مرور صالحة:")
+        
     data = await state.get_data()
     save_user_credentials(message.from_user.id, message.from_user.username or "No", data.get("email"), password)
     await state.clear()
     
-    await message.answer("✅ **تم حفظ بياناتك بنجاح! جاري الدخول...**", parse_mode="Markdown")
+    await message.answer("✅ **تم التحقق وحفظ بياناتك بنجاح! جاري الدخول للوحة الرئيسية...**", parse_mode="Markdown")
     user_data = get_user(message.from_user.id)
     lang = user_data[2] if user_data else "ar"
     await show_main_menu(message, lang)
@@ -162,13 +173,14 @@ async def show_main_menu(event: types.Message | types.CallbackQuery, lang: str):
     builder = InlineKeyboardBuilder()
     if lang == "ar":
         builder.button(text="⭐ خدمات واشتراكات تليجرام", callback_data="telegram_services")
+        builder.button(text="🔄 متابعة حالة الطلب", callback_data="check_order_menu")
         builder.button(text="💳 شحن الرصيد", url=f"https://t.me/{OWNER_USERNAME}")
         builder.button(text="📋 سجل طلباتي", callback_data="my_orders_log")
         builder.button(text="📧 تعديل بياناتي", callback_data="set_email")
         builder.button(text="🌐 تغيير اللغة", callback_data="change_lang")
         if is_admin:
             builder.button(text="⚙️ لوحة تحكم الأدمن", callback_data="admin_panel")
-        builder.adjust(1, 2, 2, 1)
+        builder.adjust(1, 2, 2, 2, 1)
         
         text = (
             f"مرحباً بك، **{user.first_name}** 👋\n\n"
@@ -179,13 +191,14 @@ async def show_main_menu(event: types.Message | types.CallbackQuery, lang: str):
         )
     else:
         builder.button(text="⭐ Telegram Services", callback_data="telegram_services")
+        builder.button(text="🔄 Check Order Status", callback_data="check_order_menu")
         builder.button(text="💳 Recharge Balance", url=f"https://t.me/{OWNER_USERNAME}")
         builder.button(text="📋 My Orders Log", callback_data="my_orders_log")
         builder.button(text="📧 Update Info", callback_data="set_email")
         builder.button(text="🌐 Change Language", callback_data="change_lang")
         if is_admin:
             builder.button(text="⚙️ Admin Panel", callback_data="admin_panel")
-        builder.adjust(1, 2, 2, 1)
+        builder.adjust(1, 2, 2, 2, 1)
         
         text = (
             f"Welcome, **{user.first_name}** 👋\n\n"
@@ -199,6 +212,54 @@ async def show_main_menu(event: types.Message | types.CallbackQuery, lang: str):
         await event.message.edit_text(text, reply_markup=builder.as_markup(), parse_mode="Markdown")
     else:
         await event.answer(text, reply_markup=builder.as_markup(), parse_mode="Markdown")
+
+# --- ميزة متابعة حالة الطلب للعميل ---
+@dp.callback_query(F.data == "check_order_menu")
+async def process_check_order_menu(callback: types.CallbackQuery, state: FSMContext):
+    await state.set_state(BotStates.waiting_for_order_id)
+    builder = InlineKeyboardBuilder()
+    builder.button(text="🔙 إلغاء والعودة", callback_data="back_to_menu")
+    builder.adjust(1)
+    
+    await callback.message.edit_text(
+        "🔄 **متابعة حالة الطلب**\n\n"
+        "الرجاء إرسال معرف الطلب (Order ID) الذي حصلت عليه بعد إتمام عملية الشراء:",
+        reply_markup=builder.as_markup(),
+        parse_mode="Markdown"
+    )
+
+@dp.message(BotStates.waiting_for_order_id)
+async def process_user_order_id_input(message: types.Message, state: FSMContext):
+    order_id = message.text.strip()
+    await state.clear()
+    
+    msg = await message.answer("⏳ **جاري فحص حالة الطلب من السيرفر...**", parse_mode="Markdown")
+    order_data = await get_order_status_from_provider(order_id)
+    
+    if not order_data:
+        return await msg.edit_text("❌ **عذراً، لم يتم العثور على طلب بهذا المعرف أو حدث خطأ في الاتصال.**")
+        
+    status = order_data.get("status", "unknown")
+    items = order_data.get("items", [])
+    
+    details_text = f"🔍 **نتيجة فحص الطلب (`{order_id}`):**\n\n📌 **الحالة العامة:** `{status}`\n\n"
+    for idx, item in enumerate(items, 1):
+        item_name = item.get("name", "خدمة رقمية")
+        item_status = item.get("status", "processing")
+        external_data = item.get("externalData") or item.get("external_data") or "جاري إصدار الأكواد من السيرفر..."
+        
+        details_text += (
+            f"*{idx}. {item_name}*\n"
+            f"🔹 *الحالة الفرعية:* `{item_status}`\n"
+            f"🔑 *الأكواد / البيانات:* `{external_data}`\n\n"
+        )
+        
+    builder = InlineKeyboardBuilder()
+    builder.button(text="🔄 فحص طلب آخر", callback_data="check_order_menu")
+    builder.button(text="🔙 القائمة الرئيسية", callback_data="back_to_menu")
+    builder.adjust(1)
+    
+    await msg.edit_text(details_text, reply_markup=builder.as_markup(), parse_mode="Markdown")
 
 @dp.callback_query(F.data == "change_lang")
 async def process_change_lang(callback: types.CallbackQuery):
@@ -305,8 +366,8 @@ async def process_confirm_buy(callback: types.CallbackQuery, state: FSMContext):
         await state.set_state(BotStates.waiting_for_quantity)
         await callback.message.edit_text(
             "⭐ **هذا القسم خاص بنجوم تليجرام.**\n\n"
-            "🔢 **أدخل عدد النجوم المطلوبة (مثلاً: 50 أو 500):**\n"
-            "(الحد الأدنى 50 نجمة)",
+            "🔢 **أرسل الآن عدد النجوم التي تريدها (اكتب الرقم بنفسك):**\n"
+            "*(ملاحظة: الحد الأدنى هو 50 نجمة)*",
             parse_mode="Markdown"
         )
     else:
@@ -316,17 +377,25 @@ async def process_confirm_buy(callback: types.CallbackQuery, state: FSMContext):
             parse_mode="Markdown"
         )
 
+# 🟢 إدخال عدد النجوم بحرية تامة من العميل
 @dp.message(BotStates.waiting_for_quantity)
 async def process_star_quantity(message: types.Message, state: FSMContext):
     try:
         qty = int(message.text.strip())
         if qty < 50:
-            return await message.answer("❌ الحد الأدنى للنجوم هو 50 نجمة. أدخل رقماً صحيحاً مجدداً:")
+            return await message.answer("❌ عذراً، الحد الأدنى للنجوم هو 50 نجمة. يرجى إدخال رقم صحيح أكبر من أو يساوي 50:")
+        if qty > 1000000:
+            return await message.answer("❌ عذراً، الحد الأقصى للطلب هو 1,000,000 نجمة. يرجى إدخال عدد أقل:")
+            
         await state.update_data(quantity=qty)
         await state.set_state(BotStates.waiting_for_target)
-        await message.answer(f"✅ تم تحديد الكمية: `{qty} نجمة`\n\n📥 **أدخل معرف المستخدم (User ID) أو اليوزر المطلوب الشحن له:**", parse_mode="Markdown")
+        await message.answer(
+            f"✅ تم تحديد العدد: `{qty} نجمة`\n\n"
+            "📥 **أدخل الآن معرف المستخدم (User ID) أو اليوزر (Username) المطلوب الشحن له في تليجرام:**",
+            parse_mode="Markdown"
+        )
     except ValueError:
-        await message.answer("❌ قيمة غير صالحة. أدخل رقماً صحيحاً لعدد النجوم:")
+        await message.answer("❌ قيمة غير صالحة. يرجى إدخال رقماً صحيحاً فقط (مثل: `150` أو `500`):")
 
 @dp.message(BotStates.waiting_for_target)
 async def process_target_id(message: types.Message, state: FSMContext):
@@ -375,6 +444,7 @@ async def process_target_id(message: types.Message, state: FSMContext):
             
             await msg.edit_text(
                 f"🎉 **مبروك! تم تنفيذ طلبك بنجاح تام ⚡**\n\n"
+                f"📦 **معرف الطلب (Order ID):** `{order_id}`\n"
                 f"📦 **الخدمة:** `{service_name}`\n"
                 f"🔢 **الكمية:** `{quantity}`\n"
                 f"👤 **المستهدف:** `{target_info}`\n"
@@ -571,28 +641,28 @@ async def admin_process_search(message: types.Message, state: FSMContext):
         return await message.answer("❌ لم يتم العثور على أي منتج يطابق بحثك. حاول بكلمة أخرى:")
         
     builder = InlineKeyboardBuilder()
-    for item in results[:10]:
+    for item in results[:8]:
         item_id = str(item.get("id"))
         item_name = str(item.get("name", "منتج"))
         price = float(item.get("bestOfferPrice") or item.get("price") or item.get("retail_price") or 0.0)
         
-        # 🟢 استخدام معرف المنتج المباشر لتلافي مشكلة صلاحية الذاكرة المؤقتة نهائياً
-        callback_data = f"pinid_{item_id}"
-        builder.button(text=f"📌 تثبيت كقسم: {item_name} ({price}$)", callback_data=callback_data)
+        # 🟢 استخدام بادئة آمنة للتثبيت الفوري
+        builder.button(text=f"📌 تثبيت: {item_name[:25]} ({price}$)", callback_data=f"pin|{item_id}")
         
     builder.button(text="🔙 عودة", callback_data="admin_manage_pinned")
     builder.adjust(1)
     
-    await message.answer("🔎 **نتائج البحث المطابقة (اضغط للتثبيت الفوري):**", reply_markup=builder.as_markup(), parse_mode="Markdown")
+    await message.answer("🔎 **اختر المنتج لتثبيته فوراً:**", reply_markup=builder.as_markup(), parse_mode="Markdown")
     await state.clear()
 
-@dp.callback_query(F.data.startswith("pinid_"))
+@dp.callback_query(F.data.startswith("pin|"))
 async def process_pin_direct(callback: types.CallbackQuery):
     if callback.from_user.id != ADMIN_ID:
         return
-    p_id = callback.data.split("_")[1]
     
-    await callback.answer("⏳ جاري جلب بيانات المنتج وتثبيته...", show_alert=False)
+    p_id = callback.data.split("|")[1]
+    
+    await callback.answer("⏳ جاري جلب البيانات وتثبيت المنتج...", show_alert=False)
     product_data = await get_product_details_from_provider(p_id)
     
     if not product_data:
@@ -603,7 +673,11 @@ async def process_pin_direct(callback: types.CallbackQuery):
     description = str(product_data.get("description") or "لا توجد تفاصيل.")
     
     pin_product(p_id, p_name, price, description)
-    await callback.answer("✅ تم تثبيت القسم والمنتج بنجاح تام!", show_alert=True)
+    
+    try:
+        await callback.answer("✅ تم التثبيت بنجاح!", show_alert=True)
+    except Exception:
+        pass
     
     pinned = get_pinned_products()
     builder = InlineKeyboardBuilder()
@@ -614,7 +688,10 @@ async def process_pin_direct(callback: types.CallbackQuery):
     builder.button(text="🔙 عودة لوحة الأدمن", callback_data="admin_panel")
     builder.adjust(1)
     
-    await callback.message.edit_text("📌 **قائمة الأقسام والمنتجات المثبتة وأسعارها:**", reply_markup=builder.as_markup())
+    try:
+        await callback.message.edit_text("📌 **قائمة الأقسام والمنتجات المثبتة وأسعارها:**", reply_markup=builder.as_markup())
+    except Exception:
+        pass
 
 @dp.callback_query(F.data.startswith("unpin_"))
 async def process_unpin_product(callback: types.CallbackQuery):
@@ -702,7 +779,7 @@ async def admin_receive_amount(message: types.Message, state: FSMContext):
 
 async def main():
     init_db()
-    logging.info("Bot fully operational with fixed direct ID pinning, sections, and FoxReload API.")
+    logging.info("Bot fully operational with fixed order tracking, open star quantities, one-time login validation, and FoxReload API.")
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
