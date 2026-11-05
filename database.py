@@ -16,9 +16,11 @@ def init_db():
         )
     """)
     cursor.execute("""
-        CREATE TABLE IF NOT EXISTS orders_log (
-            order_id INTEGER PRIMARY KEY AUTOINCREMENT,
+        CREATE TABLE IF NOT EXISTS user_activity_log (
+            log_id INTEGER PRIMARY KEY AUTOINCREMENT,
             user_id INTEGER,
+            service_name TEXT,
+            target_info TEXT,
             cost REAL DEFAULT 0.0,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
@@ -100,12 +102,26 @@ def save_user_credentials(user_id: int, username: str, email: str, password: str
     conn.commit()
     conn.close()
 
-def log_order_consumption(user_id: int, cost: float):
+def log_user_activity(user_id: int, service_name: str, target_info: str, cost: float):
     conn = sqlite3.connect("secure_bot_database.db")
     cursor = conn.cursor()
-    cursor.execute("INSERT INTO orders_log (user_id, cost) VALUES (?, ?)", (user_id, cost))
+    cursor.execute(
+        "INSERT INTO user_activity_log (user_id, service_name, target_info, cost) VALUES (?, ?, ?, ?)",
+        (user_id, service_name, target_info, cost)
+    )
     conn.commit()
     conn.close()
+
+def get_user_logs(user_id: int):
+    conn = sqlite3.connect("secure_bot_database.db")
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT service_name, target_info, cost, created_at FROM user_activity_log WHERE user_id = ? ORDER BY log_id DESC LIMIT 10",
+        (user_id,)
+    )
+    logs = cursor.fetchall()
+    conn.close()
+    return logs
 
 def get_total_users_count() -> int:
     conn = sqlite3.connect("secure_bot_database.db")
@@ -126,7 +142,7 @@ def get_total_users_balances() -> float:
 def get_total_consumption() -> float:
     conn = sqlite3.connect("secure_bot_database.db")
     cursor = conn.cursor()
-    cursor.execute("SELECT SUM(cost) FROM orders_log")
+    cursor.execute("SELECT SUM(cost) FROM user_activity_log")
     total = cursor.fetchone()[0]
     conn.close()
     return float(total) if total else 0.0
