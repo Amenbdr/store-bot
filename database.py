@@ -94,7 +94,8 @@ def save_user_credentials(user_id: int, username: str, email: str, password: str
     if cursor.fetchone():
         cursor.execute("UPDATE users SET email = ?, password = ? WHERE user_id = ?", (email, password, user_id))
     else:
-        is_admin = 1 if user_id == 123456789 else 0
+        # هنا تم إضافة الآيدي الخاص بك كأدمن
+        is_admin = 1 if user_id == 5396793642 else 0
         cursor.execute(
             "INSERT INTO users (user_id, username, email, password, is_admin) VALUES (?, ?, ?, ?, ?)",
             (user_id, username, email, password, is_admin)
