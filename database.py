@@ -83,6 +83,7 @@ def update_user_balance(user_id: int, amount: float, operation: str):
 def update_user_language(user_id: int, lang: str):
     conn = sqlite3.connect("secure_bot_database.db")
     cursor = conn.cursor()
+    cursor.execute("INSERT OR IGNORE INTO users (user_id) VALUES (?)", (user_id,))
     cursor.execute("UPDATE users SET language = ? WHERE user_id = ?", (lang, user_id))
     conn.commit()
     conn.close()
@@ -94,7 +95,6 @@ def save_user_credentials(user_id: int, username: str, email: str, password: str
     if cursor.fetchone():
         cursor.execute("UPDATE users SET email = ?, password = ? WHERE user_id = ?", (email, password, user_id))
     else:
-        # هنا تم إضافة الآيدي الخاص بك كأدمن
         is_admin = 1 if user_id == 5396793642 else 0
         cursor.execute(
             "INSERT INTO users (user_id, username, email, password, is_admin) VALUES (?, ?, ?, ?, ?)",
