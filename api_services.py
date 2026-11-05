@@ -21,6 +21,7 @@ def init_api_config_db():
             description TEXT DEFAULT ''
         )
     """)
+    # إضافة الإعدادات الافتراضية
     cursor.execute("""
         INSERT OR IGNORE INTO api_providers (provider_key, provider_name, api_key, base_url)
         VALUES ('foxreload', 'FoxReload API', 'dmk_SLDMDj7c85zyzMGiCN56JGFYsu0Dyc_cuFL9DWxcpEA', 'https://public-api.foxreload.com')
@@ -84,12 +85,12 @@ def unpin_product(product_id: str):
     conn.commit()
     conn.close()
 
+# --- التحديث الذكي لدالة البحث لضمان العثور على المنتجات ---
 async def search_products_from_provider(query: str, provider_key: str = "foxreload"):
     config = get_provider_config(provider_key)
     if not config:
         return []
     
-    url = f"{config['base_url']}/api/products/search?query={query}&limit=10"
     headers = {
         "X-API-Key": config["api_key"],
         "X-Language": "en",
@@ -100,11 +101,29 @@ async def search_products_from_provider(query: str, provider_key: str = "foxrelo
     timeout = aiohttp.ClientTimeout(total=30)
     async with aiohttp.ClientSession(timeout=timeout) as session:
         try:
-            async with session.get(url, headers=headers) as response:
+            # المحاولة الأولى: استخدام رابط البحث الخاص بالموقع
+            search_url = f"{config['base_url']}/api/products/search?query={query}&limit=50"
+            async with session.get(search_url, headers=headers) as response:
                 if response.status == 200:
                     data = await response.json()
-                    return data.get("items", []) or data.get("data", [])
+                    results = data.get("items", []) or data.get("data", [])
+                    
+                    # إذا أرجع الموقع نتيجة فارغة []، يتم استخدام محرك البحث الذكي المحلي
+                    if not results:
+                        logging.info("API search returned []. Using smart local search fall-back...")
+                        all_url = f"{config['base_url']}/api/products/"
+                        async with session.get(all_url, headers=headers) as all_res:
+                            if all_res.status == 200:
+                                all_data = await all_res.json()
+                                all_items = all_data.get("items", []) or all_data.get("data", [])
+                                # فلترة النتائج لضمان العثور على الكلمة
+                                results = [
+                                    item for item in all_items 
+                                    if query.lower() in str(item.get("name", "")).lower()
+                                ]
+                    return results
                 else:
+                    logging.error(f"Search API returned error status: {response.status}")
                     return []
         except Exception as e:
             logging.error(f"Search exception: {str(e)}")
