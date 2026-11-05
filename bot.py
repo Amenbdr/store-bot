@@ -37,7 +37,7 @@ class BotStates(StatesGroup):
     waiting_for_quantity = State()
     waiting_for_new_margin = State()
     waiting_for_custom_price = State()
-    waiting_for_order_id = State() # 🟢 حالة تتبع وإدخال آيدي الطلب للفحص
+    waiting_for_order_id = State()
     admin_get_user = State()
     admin_get_amount = State()
     waiting_for_new_api_key = State()
@@ -85,7 +85,6 @@ async def cmd_start(message: types.Message, state: FSMContext):
             parse_mode="Markdown"
         )
     
-    # تحقق مما إذا كان المستخدم قد سجل دخوله مسبقاً (تسجيل لمرة واحدة)
     user_data = get_user(user_id)
     if user_data and user_data[0] and str(user_data[0]).endswith("@gmail.com"):
         lang = user_data[2] if user_data else "ar"
@@ -213,7 +212,6 @@ async def show_main_menu(event: types.Message | types.CallbackQuery, lang: str):
     else:
         await event.answer(text, reply_markup=builder.as_markup(), parse_mode="Markdown")
 
-# --- ميزة متابعة حالة الطلب للعميل ---
 @dp.callback_query(F.data == "check_order_menu")
 async def process_check_order_menu(callback: types.CallbackQuery, state: FSMContext):
     await state.set_state(BotStates.waiting_for_order_id)
@@ -350,7 +348,7 @@ async def process_view_product_details(callback: types.CallbackQuery, state: FSM
     
     text = (
         f"📦 **الخدمة / القسم:** `{p_name}`\n\n"
-        f"💰 **السعر الحالي:** `{p_price}$`\n"
+        f"💰 **السعر للنجمة الواحدة:** `{p_price}$`\n"
         f"📦 **المخزون:** `{stock_count}`\n\n"
         f"📝 **التفاصيل:**\n{p_desc}\n\n"
         "اضغط على زر الشراء أدناه للمتابعة:"
@@ -367,7 +365,7 @@ async def process_confirm_buy(callback: types.CallbackQuery, state: FSMContext):
         await callback.message.edit_text(
             "⭐ **هذا القسم خاص بنجوم تليجرام.**\n\n"
             "🔢 **أرسل الآن عدد النجوم التي تريدها (اكتب الرقم بنفسك):**\n"
-            "*(ملاحظة: الحد الأدنى هو 50 نجمة)*",
+            "*(الحد الأدنى: 50 نجمة | الحد الأقصى: 1,000,000 نجمة)*",
             parse_mode="Markdown"
         )
     else:
@@ -377,13 +375,13 @@ async def process_confirm_buy(callback: types.CallbackQuery, state: FSMContext):
             parse_mode="Markdown"
         )
 
-# 🟢 إدخال عدد النجوم بحرية تامة من العميل
+# 🟢 التحقق التام من الحد الأدنى (50) والحد الأقصى (1,000,000) لنجوم تليجرام
 @dp.message(BotStates.waiting_for_quantity)
 async def process_star_quantity(message: types.Message, state: FSMContext):
     try:
         qty = int(message.text.strip())
         if qty < 50:
-            return await message.answer("❌ عذراً، الحد الأدنى للنجوم هو 50 نجمة. يرجى إدخال رقم صحيح أكبر من أو يساوي 50:")
+            return await message.answer("❌ عذراً، الحد الأدنى للنجوم هو 50 نجمة. يرجى إدخال رقم صحيح بين 50 و 1,000,000:")
         if qty > 1000000:
             return await message.answer("❌ عذراً، الحد الأقصى للطلب هو 1,000,000 نجمة. يرجى إدخال عدد أقل:")
             
@@ -395,7 +393,7 @@ async def process_star_quantity(message: types.Message, state: FSMContext):
             parse_mode="Markdown"
         )
     except ValueError:
-        await message.answer("❌ قيمة غير صالحة. يرجى إدخال رقماً صحيحاً فقط (مثل: `150` أو `500`):")
+        await message.answer("❌ قيمة غير صالحة. يرجى إدخال رقماً صحيحاً فقط (مثلاً: `150` أو `500`):")
 
 @dp.message(BotStates.waiting_for_target)
 async def process_target_id(message: types.Message, state: FSMContext):
@@ -646,7 +644,6 @@ async def admin_process_search(message: types.Message, state: FSMContext):
         item_name = str(item.get("name", "منتج"))
         price = float(item.get("bestOfferPrice") or item.get("price") or item.get("retail_price") or 0.0)
         
-        # 🟢 استخدام بادئة آمنة للتثبيت الفوري
         builder.button(text=f"📌 تثبيت: {item_name[:25]} ({price}$)", callback_data=f"pin|{item_id}")
         
     builder.button(text="🔙 عودة", callback_data="admin_manage_pinned")
@@ -779,7 +776,7 @@ async def admin_receive_amount(message: types.Message, state: FSMContext):
 
 async def main():
     init_db()
-    logging.info("Bot fully operational with fixed order tracking, open star quantities, one-time login validation, and FoxReload API.")
+    logging.info("Bot fully operational with fixed star quantity limits (50 to 1M) and client order tracking.")
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
