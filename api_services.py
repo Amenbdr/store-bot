@@ -92,7 +92,7 @@ async def search_products_from_provider(query: str, provider_key: str = "foxrelo
     
     headers = {
         "X-API-Key": config["api_key"],
-        "X-Language": "ar", # 🟢 تم تحويل اللغة إلى العربية
+        "X-Language": "en", # ضبط اللغة على الإنجليزية لضمان مطابقة نتائج البحث الأساسية
         "X-Currency": "usd",
         "Accept": "application/json"
     }
@@ -145,7 +145,7 @@ async def get_product_details_from_provider(product_id_or_slug: str, provider_ke
     url = f"{config['base_url']}/api/products/{product_id_or_slug}"
     headers = {
         "X-API-Key": config["api_key"],
-        "X-Language": "ar", # 🟢 تم تحويل اللغة إلى العربية لجلب الوصف بالعربي
+        "X-Language": "en",
         "X-Currency": "usd",
         "Accept": "application/json"
     }
@@ -170,7 +170,7 @@ async def check_provider_balance(provider_key: str):
     balance_url = f"{config['base_url']}/api/access/me/balances/"
     headers = {
         "X-API-Key": config["api_key"],
-        "X-Language": "ar",
+        "X-Language": "en",
         "X-Currency": "usd",
         "Accept": "application/json"
     }
@@ -195,7 +195,7 @@ async def send_order_to_provider(product_id: str, target_info: str, quantity: in
     url = f"{config['base_url']}/api/orders/"
     headers = {
         "X-API-Key": config["api_key"],
-        "X-Language": "ar",
+        "X-Language": "en",
         "X-Currency": "usd",
         "Accept": "application/json",
         "Content-Type": "application/json"
@@ -234,7 +234,7 @@ async def pay_order_in_provider(order_id: str, provider_key: str = "foxreload"):
     url = f"{config['base_url']}/api/orders/{order_id}/pay"
     headers = {
         "X-API-Key": config["api_key"],
-        "X-Language": "ar",
+        "X-Language": "en",
         "X-Currency": "usd",
         "Accept": "application/json",
         "Content-Type": "application/json"
@@ -267,7 +267,7 @@ async def get_order_status_from_provider(order_id: str, provider_key: str = "fox
     url = f"{config['base_url']}/api/orders/{order_id}"
     headers = {
         "X-API-Key": config["api_key"],
-        "X-Language": "ar",
+        "X-Language": "en",
         "X-Currency": "usd",
         "Accept": "application/json"
     }
