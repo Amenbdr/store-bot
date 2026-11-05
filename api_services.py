@@ -85,7 +85,6 @@ def unpin_product(product_id: str):
     conn.commit()
     conn.close()
 
-# --- التحديث الذكي لدالة البحث لضمان العثور على المنتجات وتفادي أخطاء الـ القوائم ---
 async def search_products_from_provider(query: str, provider_key: str = "foxreload"):
     config = get_provider_config(provider_key)
     if not config:
@@ -93,7 +92,7 @@ async def search_products_from_provider(query: str, provider_key: str = "foxrelo
     
     headers = {
         "X-API-Key": config["api_key"],
-        "X-Language": "en",
+        "X-Language": "ar", # 🟢 تم تحويل اللغة إلى العربية
         "X-Currency": "usd",
         "Accept": "application/json"
     }
@@ -101,13 +100,11 @@ async def search_products_from_provider(query: str, provider_key: str = "foxrelo
     timeout = aiohttp.ClientTimeout(total=30)
     async with aiohttp.ClientSession(timeout=timeout) as session:
         try:
-            # المحاولة الأولى: استخدام رابط البحث الخاص بالموقع
             search_url = f"{config['base_url']}/api/products/search?query={query}&limit=50"
             async with session.get(search_url, headers=headers) as response:
                 if response.status == 200:
                     data = await response.json()
                     
-                    # التحقق من نوع البيانات القادمة من السيرفر لتفادي خطأ (list object has no attribute get)
                     if isinstance(data, list):
                         results = data
                     elif isinstance(data, dict):
@@ -115,7 +112,6 @@ async def search_products_from_provider(query: str, provider_key: str = "foxrelo
                     else:
                         results = []
                     
-                    # إذا أرجع الموقع نتيجة فارغة، يتم استخدام محرك البحث الذكي المحلي كبديل (Fallback)
                     if not results:
                         logging.info("API search returned empty. Using smart local search fall-back...")
                         all_url = f"{config['base_url']}/api/products/"
@@ -130,14 +126,12 @@ async def search_products_from_provider(query: str, provider_key: str = "foxrelo
                                 else:
                                     all_items = []
                                     
-                                # فلترة النتائج لضمان العثور على الكلمة المطلوبة
                                 results = [
                                     item for item in all_items 
                                     if query.lower() in str(item.get("name", "")).lower()
                                 ]
                     return results
                 else:
-                    logging.error(f"Search API returned error status: {response.status}")
                     return []
         except Exception as e:
             logging.error(f"Search exception: {str(e)}")
@@ -151,7 +145,7 @@ async def get_product_details_from_provider(product_id_or_slug: str, provider_ke
     url = f"{config['base_url']}/api/products/{product_id_or_slug}"
     headers = {
         "X-API-Key": config["api_key"],
-        "X-Language": "en",
+        "X-Language": "ar", # 🟢 تم تحويل اللغة إلى العربية لجلب الوصف بالعربي
         "X-Currency": "usd",
         "Accept": "application/json"
     }
@@ -166,7 +160,6 @@ async def get_product_details_from_provider(product_id_or_slug: str, provider_ke
                 else:
                     return None
         except Exception as e:
-            logging.error(f"Get product details exception: {str(e)}")
             return None
 
 async def check_provider_balance(provider_key: str):
@@ -177,7 +170,7 @@ async def check_provider_balance(provider_key: str):
     balance_url = f"{config['base_url']}/api/access/me/balances/"
     headers = {
         "X-API-Key": config["api_key"],
-        "X-Language": "en",
+        "X-Language": "ar",
         "X-Currency": "usd",
         "Accept": "application/json"
     }
@@ -202,7 +195,7 @@ async def send_order_to_provider(product_id: str, target_info: str, quantity: in
     url = f"{config['base_url']}/api/orders/"
     headers = {
         "X-API-Key": config["api_key"],
-        "X-Language": "en",
+        "X-Language": "ar",
         "X-Currency": "usd",
         "Accept": "application/json",
         "Content-Type": "application/json"
@@ -241,7 +234,7 @@ async def pay_order_in_provider(order_id: str, provider_key: str = "foxreload"):
     url = f"{config['base_url']}/api/orders/{order_id}/pay"
     headers = {
         "X-API-Key": config["api_key"],
-        "X-Language": "en",
+        "X-Language": "ar",
         "X-Currency": "usd",
         "Accept": "application/json",
         "Content-Type": "application/json"
@@ -274,7 +267,7 @@ async def get_order_status_from_provider(order_id: str, provider_key: str = "fox
     url = f"{config['base_url']}/api/orders/{order_id}"
     headers = {
         "X-API-Key": config["api_key"],
-        "X-Language": "en",
+        "X-Language": "ar",
         "X-Currency": "usd",
         "Accept": "application/json"
     }
